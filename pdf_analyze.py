@@ -2,13 +2,14 @@
 
 Extracts text from a contract PDF, pairs it with the Georgian text of Article
 104 (kept in the knowledge/ folder), sends both to a local Qwen model via
-Ollama, and writes the result as structured JSON. A downstream script turns
+Ollama, and prints the result as structured JSON. A downstream script turns
 that JSON into an Excel workbook -- this program never formats output itself.
+Saving the JSON to a file is currently disabled; uncomment the marked lines at
+the end of main() to re-enable it (then --out chooses the destination).
 
 Usage:
     python pdf_analyze.py                          # prompts for a contract PDF
     python pdf_analyze.py contract.pdf
-    python pdf_analyze.py contract.pdf --out result.json
     python pdf_analyze.py contract.pdf --article104 path/to/article104.txt
     python pdf_analyze.py --dump-article104        # verify Article 104 loads cleanly
 """
@@ -101,14 +102,33 @@ You are given two documents:
 Your objective: (1) extract structured data from the contract, and (2) analyse that data against Article 104. Return everything as a single JSON object with two top-level objects, "contract_data" and "tax_analysis". A downstream program builds an Excel file from your JSON, so output data only -- no commentary, no Markdown.
 
 STEP 1 -- EXTRACT CONTRACT DATA (the "contract_data" object)
-Read the whole contract and fill in every field.
-- If a piece of information is not explicitly stated in the contract, use exactly this value: "{not_specified}".
+Read the whole contract and fill in every field listed in the FIELD GUIDE below.
+- Never leave a field empty. If a piece of information is not explicitly stated in the contract, use exactly this value: "{not_specified}".
 - Proper nouns -- company names, individual names, addresses -- must be copied exactly as written in the contract. Never translate or transliterate them.
-- Every other value (roles, residency, service type, payment frequency, payment terms, etc.) must be written in natural, professional legal Georgian.
+- Every other value must be written in natural, professional legal Georgian.
 - Dates: DD/MM/YYYY format where possible.
-- "contract_value": a plain number without currency symbols or thousands separators; put the currency in "currency" as an ISO code (USD, EUR, GEL, ...).
-- "party_a_role" / "party_b_role": use "შემსრულებელი" for the party providing the service and "შემკვეთი" for the party ordering and paying for it.
-- "party_a_residency" / "party_b_residency": state residency relative to Georgia with the country in brackets, e.g. "რეზიდენტი (საქართველო)" or "არარეზიდენტი (გერმანია)".
+
+FIELD GUIDE
+Party A is the first party named in the contract; Party B is the second. For each party, fill six fields:
+- "party_a_name" / "party_b_name": the party's full name, exactly as written in the contract.
+- "party_a_inn" / "party_b_inn": the party's tax identification number. It may be labelled INN, TIN, tax ID, identification number, company number, or registration number. Copy it exactly as written.
+- "party_a_legal_form" / "party_b_legal_form": the party's legal form of incorporation (LLC, Ltd, GmbH, JSC, individual entrepreneur, ...), written in Georgian, e.g. "შეზღუდული პასუხისმგებლობის საზოგადოება" or "ინდივიდუალური მეწარმე".
+- "party_a_address" / "party_b_address": the party's registered/legal address, exactly as written.
+- "party_a_role" / "party_b_role": "შემსრულებელი" for the party providing the service, "შემკვეთი" for the party ordering and paying for it.
+- "party_a_residency" / "party_b_residency": residency relative to Georgia, with the country in brackets, e.g. "რეზიდენტი (საქართველო)" or "არარეზიდენტი (გერმანია)". If not stated outright, judge from the party's address or place of incorporation.
+
+Then the terms of the deal:
+- "service_type": the category of service -- see SERVICE TYPE below.
+- "service_description": briefly describe the specific scope of work of this contract, in Georgian (a longer, contract-specific version of the service type).
+- "contract_value": the total contract price as a plain number -- no currency symbols, no thousands separators.
+- "payment_frequency": how often payment is made, e.g. "ერთჯერადი" (one-time), "ყოველთვიური" (monthly), "ეტაპობრივი" (milestone-based).
+- "currency": ISO code of the contract currency (USD, EUR, GEL, ...).
+- "payment_terms": when and under what conditions payment is due, e.g. "წინასწარი გადახდა" (advance payment) or "ინვოისის მიღებიდან 10 დღეში" (10 days after receiving the invoice).
+- "signing_date": the date the contract was signed.
+- "effective_date": the date the contract enters into force.
+- "contract_duration": how long the contract remains in force, e.g. "12 თვე", "1 წელი", "უვადო" (indefinite). If only the effective and end dates are given, derive the duration from them.
+- "end_date": the date the contract expires or is set to terminate.
+- "place_of_service": where the service is performed or delivered.
 
 SERVICE TYPE ("service_type"): match the contract against these categories and write the Georgian name given after the arrow:
 - IT services (software development, support, hosting) -> "IT მომსახურება"
@@ -117,7 +137,6 @@ SERVICE TYPE ("service_type"): match the contract against these categories and w
 - Legal services (representation, document preparation) -> "იურიდიული მომსახურება"
 - Logistics services (cargo transportation, warehousing) -> "ლოგისტიკური მომსახურება"
 If none of these fit, describe the actual service found in the contract, in Georgian.
-"service_description": briefly describe the specific scope of work of this contract, in Georgian.
 
 STEP 2 -- TAX ANALYSIS UNDER ARTICLE 104 (the "tax_analysis" object)
 Using the data you extracted (especially the parties' residency, roles, service type, and place of service), analyse the contract against the Georgian text of Article 104 (income received from a source in Georgia) provided below. Work strictly from that text -- do not rely on outside knowledge of the Tax Code.
@@ -322,7 +341,10 @@ def fill_missing(data: dict) -> dict:
         for field in fields:
             if not str(block.get(field, "") or "").strip():
                 block[field] = NOT_SPECIFIED
-                print(f"  warning: model omitted {section}.{field}", file=sys.stderr)
+                print(
+                    f'  note: model left {section}.{field} empty; filled with "{NOT_SPECIFIED}"',
+                    file=sys.stderr,
+                )
     return data
 
 
@@ -476,11 +498,13 @@ def main() -> None:
     except Cancelled:
         raise SystemExit(130)
 
-    out_path = args.out or args.pdf.with_suffix(".json")
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
-    out_path.write_text(rendered + "\n", encoding="utf-8")
     print(rendered)
-    print(f"\nSaved: {out_path}", file=sys.stderr)
+
+    # Uncomment to also save the JSON to a file (next to the PDF, or at --out):
+    # out_path = args.out or args.pdf.with_suffix(".json")
+    # out_path.write_text(rendered + "\n", encoding="utf-8")
+    # print(f"\nSaved: {out_path}", file=sys.stderr)
 
 
 if __name__ == "__main__":
