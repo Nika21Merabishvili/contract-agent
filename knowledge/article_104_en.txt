@@ -1,0 +1,82 @@
+# STATUS: UNREVIEWED MACHINE TRANSLATION — NOT YET FROZEN.
+# Source of truth is article_104.txt (Georgian). This file is a working English
+# rendering of it, produced to let a small local model reason over English rather
+# than over Georgian script.
+#
+# A Georgian-speaking tax lawyer must review this against article_104.txt and
+# replace this banner with "STATUS: REVIEWED AND FROZEN <name> <date>" before any
+# output derived from it is relied on. Until then, treat every citation this file
+# produces as unverified.
+#
+# Translation rules applied:
+#   - Clause labels (ა, ბ, გ.ა, გ.ბ, ზ.ა, ...) are kept as Georgian identifiers,
+#     never romanised, so citations still read "104-ე მუხლის პირველი ნაწილის
+#     „გ.ზ" ქვეპუნქტი" and can be traced straight back to article_104.txt.
+#   - Only statutory text is translated. No clause is summarised, merged, or omitted.
+#   - Paragraph order and line structure mirror article_104.txt for side-by-side diffing.
+#
+# Lines beginning with '#' are stripped by pdf_analyze.py and never reach the model.
+
+Article 104. Income received from a source in Georgia
+
+1. For the purposes of this Section, income received from a source in Georgia includes:
+
+ა) income received from employment in Georgia;
+
+ბ) income or benefit received from the supply of goods within the territory of Georgia;
+
+გ) income received from the rendering of services in Georgia. For this purpose, unless otherwise provided by this Article, a service is deemed to be rendered in Georgia if:
+
+გ.ა) the service is actually rendered within the territory of Georgia;
+
+გ.ბ) the service is directly connected with immovable property located in Georgia;
+
+გ.გ) the service is directly connected with movable property located in Georgia;
+
+გ.დ) the service is connected with securities issued by a resident of Georgia;
+
+გ.ე) the place of actual rendering of the service is Georgia and the service is rendered in the fields of culture, art, education, tourism, recreation, physical culture or sport;
+
+გ.ვ) the rendering of the service is connected with the carriage of cargo or the transport of passengers, and the place of commencement and completion of the transportation is Georgia;
+
+გ.ზ) the service provider and the service recipient are in different states and the service provider is a resident of Georgia, except where the rendering of the service by the service provider is carried out in another country through its permanent establishment, which confirms that the service provider rendered the service in another country (other than Georgia);
+
+გ.თ) the service provider and the service recipient are in different states and the rendering of the service by the service provider is carried out in Georgia through its permanent establishment or employee, or otherwise (including where the expense connected with the rendering of the service by the service provider has been incurred in Georgia, irrespective of the place of its actual payment), which confirms that the service provider rendered the service in Georgia;
+
+დ) income received from economic activity carried out by a non-resident's permanent establishment in Georgia, including income comprising the proceeds received by that non-resident from the sale of identical (similar) goods in Georgia; and also income from services rendered in Georgia that are identical or similar to the services rendered by the permanent establishment;
+
+ე) income received, in connection with economic activity carried out in Georgia, from the cancellation of liabilities as a result of the write-off of bad debts and from the sale of fixed assets under Article 111(7) of this Code, or income received as a result of compensation under Article 146 of this Code;
+
+ვ) a dividend received from a resident legal person; income received from the sale of a share of a resident legal person and/or of a partner's interest in a legal person;
+
+ზ) interest, if the payer of the interest is a resident of Georgia. In addition, irrespective of whether or not the payer of the interest is a resident of Georgia:
+
+ზ.ა) interest shall be deemed income received from a source in Georgia if a non-resident person has a permanent establishment in Georgia to which the debt obligation of the non-resident person relates, and the interest expense connected with that debt obligation is attributable to the expenses of the permanent establishment, irrespective of whether or not that expense has been incurred by that permanent establishment;
+
+ზ.ბ) interest shall not be deemed income received from a source in Georgia if a resident person confirms that it has a permanent establishment in a foreign country to which the debt obligation of the resident person relates, and the interest expense connected with that debt obligation is attributable to the expenses of the permanent establishment, irrespective of whether or not that expense has been incurred by that permanent establishment;
+
+თ) a pension or scholarship paid by a resident;
+
+ი) a royalty, if the payer of the royalty is a resident of Georgia. In addition, irrespective of whether or not the payer of the royalty is a resident of Georgia:
+
+ი.ა) a royalty shall be deemed income received from a source in Georgia if a non-resident has a permanent establishment in Georgia in connection with which the obligation to pay the royalty arose, irrespective of whether or not that expense has been incurred by that permanent establishment;
+
+ი.ბ) a royalty shall not be deemed income received from a source in Georgia if a resident confirms that it has a permanent establishment in a foreign country in connection with which the obligation to pay the royalty arose, irrespective of whether or not that expense has been incurred by that permanent establishment;
+
+კ) income received from the sale or transfer of rights defined by Article 8(21) of this Code that exist in or are used in Georgia;
+
+ლ) income received from the lease of movable property used in Georgia and/or from the transfer of another contractual right of use;
+
+მ) income received from immovable property located in Georgia and used for economic activity, including income received from the sale of a partner's interest in such property;
+
+ნ) income received from the supply of shares or of a partner's interest in an enterprise, more than 50 per cent of the value of whose assets is formed, directly or indirectly, from the value of immovable property located in Georgia;
+
+ო) income received from a resident enterprise or from a non-resident's permanent establishment in Georgia for management, and also for financial and/or insurance services (including reinsurance services);
+
+პ) income received in the form of insurance contributions on the basis of a contract of insurance or reinsurance of a risk arising in Georgia;
+
+ჟ) income received from transport services in international carriage between Georgia and foreign countries, or from telecommunication services in international communications;
+
+რ) other income received from activity in Georgia.
+
+2. When determining the source of income provided for by the first part of this Article, the place of receipt of the amount of the income shall not be taken into account.

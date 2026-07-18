@@ -9,21 +9,24 @@ workbook.
 
 - [Ollama](https://ollama.com) **0.5.0 or newer** (structured outputs), with the
   model pulled: `ollama pull qwen3.5:4b`
-- Python packages: `pip install ollama pypdf`
-- The Georgian text of Article 104 placed in [knowledge/](knowledge/) — see
+- Python packages: `pip install ollama pypdf pdfplumber`
+  (`pdfplumber` is optional but recommended — without it, tables reach the model
+  as interleaved columns and figures inside them get lost.)
+- The Georgian text of Article 104 in [knowledge/](knowledge/) — see
   [knowledge/README.md](knowledge/README.md).
 
 ## Usage
 
 ```
 python pdf_analyze.py                     # prompts for a contract PDF
-python pdf_analyze.py contract.pdf        # writes contract.json next to the PDF
+python pdf_analyze.py contract.pdf
 python pdf_analyze.py contract.pdf --out result.json
-python pdf_analyze.py --dump-article104   # verify Article 104 loads as readable Georgian
-python pdf_analyze.py contract.pdf --show-input   # debug: see the exact prompt sent
+python pdf_analyze.py contract.pdf --article-lang ka   # reason over the Georgian statute
+python pdf_analyze.py --dump-article104   # verify Article 104 loads as readable text
+python pdf_analyze.py contract.pdf --show-input   # debug: see every prompt sent
 ```
 
-The result is printed to stdout and saved as a `.json` file with two blocks:
+The result is printed to stdout with three blocks:
 
 - `contract_data` — 23 fields (parties, service type, value, dates, …),
   values in Georgian, proper nouns kept as written in the contract, missing
@@ -31,6 +34,61 @@ The result is printed to stdout and saved as a `.json` file with two blocks:
 - `tax_analysis` — 4 fields: Georgian-source income yes/no with a clause-level
   justification from Article 104, and the withholding / reverse-charge VAT
   conclusion with reasoning.
+- `_audit` — the full Article 104 clause checklist and the clauses cited, so the
+  reasoning can be scored rather than just the verdict.
 
-Output is schema-enforced: the JSON keys are fixed English identifiers, so the
-downstream Excel builder can rely on them.
+## How it works
+
+One call asking a 4B model for 27 fields plus cross-lingual statutory reasoning
+returned nine empty fields. The work is now split four ways, so the model does one
+job at a time:
+
+| Call | Input | Output |
+|---|---|---|
+| 1. parties | contract text | 12 party fields |
+| 2. terms | contract text | 12 commercial fields |
+| 3. tax | facts from 1+2, plus Article 104 | forced clause-by-clause checklist, then a verdict |
+| 4. translate | the 5 free-text fields | those fields in Georgian |
+
+Python then assembles the JSON.
+
+**The model does not write Georgian.** It emits English codes from closed sets
+(`provider`, `non_resident`, `llc`, `milestone`, …) and [georgian.py](georgian.py)
+maps them to Georgian. That covers 22 of the 27 fields, including every citation,
+so those values cannot contain a spelling error — a human wrote them. Only five
+genuinely free-text fields are translated by the model, in their own call.
+
+The tax call never sees the contract, only the extracted facts. Giving it the
+contract is what let it reach for the cargo-transport clause: the words were in
+front of it.
+
+### Constraints worth knowing before you change things
+
+Ollama compiles the `format` schema into a GBNF grammar, and its converter does
+**not** support all of JSON Schema. Probed against Ollama 0.32.0 / qwen3.5:4b:
+
+| Keyword | Result |
+|---|---|
+| `enum`, `minLength`, `additionalProperties: false`, `type: integer` | enforced |
+| `pattern` | **HTTP 400 — failed to parse grammar** |
+| `anyOf` | **HTTP 400 — failed to parse grammar** |
+
+So a date regex in the schema would not be ignored, it would break every run.
+Dates are requested as ISO 8601 and validated/reformatted in Python instead.
+
+`minLength` is set to 1 and never higher. A high floor does not buy reasoning:
+given a stub answer and `minLength: 80`, the model pads to exactly 80 characters
+with `"no\nto\nthe\nend.\n\nI\nhave\nnothing\nmore\nto\nsay. ..."`. Length floors
+that matter are enforced in Python, where failing means retrying.
+
+Sampling is pinned in `SAMPLING`. Two of those defaults are traps: this model
+ships with `temperature 1.0` **and `presence_penalty 1.5`** (`ollama show`).
+Penalties apply to logits before sampling, so `presence_penalty` skews output even
+at temperature 0 — on a task that copies names and addresses verbatim, that is
+pure harm.
+
+### A missing fact is not a failed analysis
+
+A contract that is silent on a fact yields `არ არის მითითებული`. A tax verdict the
+model could not reach raises instead — it is never filled in. A conclusion the
+model failed to reach must not land in the Excel looking like an extracted fact.
