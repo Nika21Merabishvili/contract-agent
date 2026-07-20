@@ -1,0 +1,194 @@
+"""Command line: parse arguments, find the inputs, run the pipeline, print JSON.
+
+The only thing this module writes to stdout is the final JSON object (or, in a
+--dump mode, the requested text payload). Progress, telemetry and warnings all
+go to stderr via `diagnostics`, so `... > out.json` yields clean JSON.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+import diagnostics as diag
+from errors import AnalysisFailure, Cancelled, ModelError
+from extraction import (
+    KNOWLEDGE_DIR,
+    extract,
+    find_article104,
+    load_text_document,
+    warn_if_unreviewed,
+)
+from pipeline import analyse_contract
+
+
+def pick_file_dialog() -> Path | None:
+    """Open the OS file picker. Returns None if tkinter is unavailable or nothing chosen."""
+    try:
+        import tkinter
+        from tkinter import filedialog
+    except ImportError:
+        return None
+
+    try:
+        root = tkinter.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)  # otherwise the dialog opens behind the terminal
+        chosen = filedialog.askopenfilename(
+            title="Select a contract PDF",
+            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+        )
+        root.destroy()
+    except Exception:
+        return None
+
+    return Path(chosen) if chosen else None
+
+
+def clean_path_input(raw: str) -> str:
+    """Drag-and-drop and 'Copy as path' wrap the path in quotes; strip them."""
+    raw = raw.strip()
+    if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+        raw = raw[1:-1]
+    return raw.strip()
+
+
+def prompt_for_pdf() -> Path:
+    """Ask for a PDF: file picker by default, typed or pasted path as fallback."""
+    while True:
+        try:
+            # The prompt goes to stderr (not input()'s default stdout) so stdout
+            # stays JSON-only even when a PDF is chosen interactively.
+            diag.prompt(
+                "\nSelect a contract PDF.\n"
+                "  [Enter] open a file picker, or paste/drag a path here (q to quit): "
+            )
+            answer = input()
+        except (EOFError, KeyboardInterrupt):
+            diag.progress()
+            raise SystemExit(130)
+        answer = clean_path_input(answer)
+
+        if answer.lower() in {"q", "quit", "exit"}:
+            raise SystemExit(0)
+
+        if not answer:
+            path = pick_file_dialog()
+            if path is None:
+                diag.progress("  no file picker available here -- type a path instead")
+                continue
+        else:
+            path = Path(answer).expanduser()
+
+        if not path.is_file():
+            diag.progress(f"  no such file: {path}")
+            continue
+        if path.suffix.lower() != ".pdf":
+            diag.progress(f"  not a .pdf: {path.name}")
+            continue
+        return path
+
+
+def main() -> None:
+    # The Windows console defaults to cp1252, which raises on any non-Latin-1
+    # character -- and most values in the output are Georgian.
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+    parser = argparse.ArgumentParser(
+        description="Analyse a contract against Article 104 of the Georgian Tax Code; output JSON."
+    )
+    parser.add_argument("pdf", type=Path, nargs="?", help="contract PDF; prompts if omitted")
+    parser.add_argument(
+        "--article104",
+        type=Path,
+        help=f"Article 104 text (.txt/.md/.pdf); default: search {KNOWLEDGE_DIR}",
+    )
+    parser.add_argument(
+        "--article-lang",
+        choices=("en", "ka"),
+        default="en",
+        help="statute language the model reasons over (default: en)",
+    )
+    parser.add_argument(
+        "--out", type=Path, help="where to write the JSON (default: next to the contract PDF)"
+    )
+    parser.add_argument("--pages", help="limit contract extraction, e.g. '1-10' or '2,5,9-12'")
+    parser.add_argument("--think", action="store_true", help="enable the model's reasoning mode")
+    parser.add_argument(
+        "-v", "--verbose", action="store_true",
+        help="stream the model's tokens and per-call context accounting to stderr",
+    )
+    parser.add_argument(
+        "--dump-text", action="store_true", help="print extracted contract text and exit"
+    )
+    parser.add_argument(
+        "--dump-article104",
+        action="store_true",
+        help="print the Article 104 text as the model will see it, then exit",
+    )
+    parser.add_argument(
+        "--show-input", action="store_true", help="print each prompt before it is sent"
+    )
+    args = parser.parse_args()
+
+    diag.set_verbose(args.verbose)
+
+    article_path = find_article104(args.article104, args.article_lang)
+
+    if args.dump_article104:
+        text = load_text_document(article_path)
+        diag.progress(f"=== {article_path} ===")
+        print(text)
+        if args.article_lang == "ka":
+            diag.progress(
+                "\nCheck the text above: it must be readable Georgian, not boxes or "
+                f"Latin garbage.\nIf it is garbled, re-save Article 104 as a UTF-8 .txt "
+                f"file in {KNOWLEDGE_DIR}."
+            )
+        return
+
+    if args.pdf is None:
+        args.pdf = prompt_for_pdf()
+    elif not args.pdf.is_file():
+        raise SystemExit(f"error: no such file: {args.pdf}")
+
+    pages = extract(args.pdf, args.pages)
+    words = sum(len(p.text.split()) for p in pages)
+    diag.progress(f"Extracted {len(pages)} page(s), ~{words} words from {args.pdf.name}")
+
+    if args.dump_text:
+        for page in pages:
+            print(f"\n=== page {page.number} ===\n{page.text}")
+        return
+
+    article_text = load_text_document(article_path)
+    warn_if_unreviewed(article_path)
+    diag.progress(f"Article 104 loaded from {article_path.name}")
+    diag.progress("Analysing contract... (Ctrl+C to stop)")
+
+    try:
+        result = analyse_contract(
+            pages, article_text, think=args.think, show_input=args.show_input
+        )
+    except Cancelled:
+        raise SystemExit(130)
+    except AnalysisFailure as exc:
+        raise SystemExit(
+            f"\nerror: the model did not reach a tax verdict.\n  {exc}\n\n"
+            "Not filling this in: a verdict the model failed to reach must not reach\n"
+            "the Excel looking like an extracted fact. Re-run, or try --think."
+        )
+    except ModelError as exc:
+        raise SystemExit(f"\nerror: {exc}")
+
+    rendered = json.dumps(result, ensure_ascii=False, indent=2)
+    print(rendered)
+
+    # Uncomment to also save the JSON to a file (next to the PDF, or at --out):
+    # out_path = args.out or args.pdf.with_suffix(".json")
+    # out_path.write_text(rendered + "\n", encoding="utf-8")
+    # diag.progress(f"\nSaved: {out_path}")
