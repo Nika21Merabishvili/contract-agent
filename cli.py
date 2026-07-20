@@ -116,6 +116,14 @@ def main() -> None:
     parser.add_argument(
         "--out", type=Path, help="where to write the JSON (default: next to the contract PDF)"
     )
+    parser.add_argument(
+        "--xlsx",
+        type=Path,
+        nargs="?",
+        const=Path("-"),
+        help="also run step 2 and write the Excel workbook; optional path "
+             "(default: next to the contract PDF). Same as piping into export_excel.py",
+    )
     parser.add_argument("--pages", help="limit contract extraction, e.g. '1-10' or '2,5,9-12'")
     parser.add_argument("--think", action="store_true", help="enable the model's reasoning mode")
     parser.add_argument(
@@ -187,6 +195,15 @@ def main() -> None:
 
     rendered = json.dumps(result, ensure_ascii=False, indent=2)
     print(rendered)
+
+    if args.xlsx is not None:
+        # Imported here, not at module scope: openpyxl is only needed by step 2,
+        # and an analysis that already printed its JSON should not be reported as
+        # a failed run just because the export dependency is missing.
+        from export_excel import write_workbook
+
+        xlsx_path = args.pdf.with_suffix(".xlsx") if args.xlsx == Path("-") else args.xlsx
+        diag.progress(f"\nSaved: {write_workbook([result], xlsx_path)}")
 
     # Uncomment to also save the JSON to a file (next to the PDF, or at --out):
     # out_path = args.out or args.pdf.with_suffix(".json")

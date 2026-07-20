@@ -218,3 +218,59 @@ def citation(clause_keys: list[str]) -> str:
         joined = f"{', '.join(quoted[:-1])} და {quoted[-1]}"
         noun = "ქვეპუნქტები"
     return f"საფუძველი: 104-ე მუხლის პირველი ნაწილის {joined} {noun}."
+
+
+# --------------------------------------------------------------------------- #
+# Field labels -- the human-readable Georgian name of each output field
+# --------------------------------------------------------------------------- #
+#
+# Everything above names a *value*; these name the *field* itself. They live here
+# with the rest of the vocabulary rather than in export_excel.py so the Excel
+# header row cannot drift away from the wording the app already uses, and so the
+# terms stay consistent with the value tables: "სამართლებრივი ფორმა" matches
+# LEGAL_FORM["other"], "რეზიდენტობა" the RESIDENCY pair, "მომსახურების ..." the
+# SERVICE_TYPE entries, and the justification header cites the same 104-ე მუხლი
+# that citation() renders.
+
+PARTY_FIELD_LABEL = {
+    "name": "დასახელება",
+    "inn": "საიდენტიფიკაციო კოდი",
+    "legal_form": "სამართლებრივი ფორმა",
+    "address": "მისამართი",
+    "role": "როლი",
+    "residency": "რეზიდენტობა",
+}
+
+FIELD_LABELS = {
+    f"party_{tag}_{key}": f"მხარე {tag.upper()} – {label}"
+    for tag in ("a", "b")
+    for key, label in PARTY_FIELD_LABEL.items()
+}
+
+FIELD_LABELS.update({
+    "service_type": "მომსახურების ტიპი",
+    "service_description": "მომსახურების აღწერა",
+    "contract_value": "ხელშეკრულების ღირებულება",
+    "payment_frequency": "გადახდის პერიოდულობა",
+    "currency": "ვალუტა",
+    "payment_terms": "გადახდის პირობები",
+    "signing_date": "ხელმოწერის თარიღი",
+    "effective_date": "ძალაში შესვლის თარიღი",
+    "contract_duration": "ხელშეკრულების ვადა",
+    "end_date": "დასრულების თარიღი",
+    "place_of_service": "მომსახურების გაწევის ადგილი",
+    "is_georgian_source_income": "საქართველოში არსებული წყაროდან მიღებული შემოსავალი",
+    "is_georgian_source_income_justification": "დასაბუთება (104-ე მუხლი)",
+    "withholding_or_reverse_vat_obligation": "წყაროსთან დაკავების / უკუდაბეგვრის ვალდებულება",
+    "withholding_or_reverse_vat_explanation": "ვალდებულების განმარტება",
+})
+
+
+def field_label(key: str) -> str:
+    """Georgian column header for an output field; falls back to the key itself.
+
+    Same reasoning as country_name(): an unlabelled field should show up in the
+    sheet as a visible `party_c_name` for a human to fix, not be dropped or
+    guessed at.
+    """
+    return FIELD_LABELS.get(key, key)

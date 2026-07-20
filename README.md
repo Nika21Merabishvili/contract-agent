@@ -2,16 +2,16 @@
 
 Analyses a service contract (PDF) against Article 104 of the Tax Code of
 Georgia using a local Qwen model via Ollama, and outputs structured JSON.
-A separate script (next step of the project) turns that JSON into an Excel
-workbook.
+[export_excel.py](export_excel.py) then turns that JSON into an Excel workbook.
 
 ## Requirements
 
 - [Ollama](https://ollama.com) **0.5.0 or newer** (structured outputs), with the
   model pulled: `ollama pull qwen3.5:4b`
-- Python packages: `pip install ollama pypdf pdfplumber`
+- Python packages: `pip install ollama pypdf pdfplumber openpyxl`
   (`pdfplumber` is optional but recommended — without it, tables reach the model
-  as interleaved columns and figures inside them get lost.)
+  as interleaved columns and figures inside them get lost. `openpyxl` is needed
+  only for step 2, the Excel export.)
 - The Georgian text of Article 104 in [knowledge/](knowledge/) — see
   [knowledge/README.md](knowledge/README.md).
 
@@ -36,6 +36,31 @@ The result is printed to stdout with three blocks:
   conclusion with reasoning.
 - `_audit` — the full Article 104 clause checklist and the clauses cited, so the
   reasoning can be scored rather than just the verdict.
+
+## Step 2 — the Excel workbook
+
+`pdf_analyze.py` is "PDF → JSON"; [export_excel.py](export_excel.py) is
+"JSON → xlsx". They are separate programs, so a saved analysis can be
+re-exported without paying for the model again:
+
+```
+python pdf_analyze.py contract.pdf | python export_excel.py -o out.xlsx
+python pdf_analyze.py contract.pdf > result.json
+python export_excel.py result.json                # reads a file; -o is optional
+python pdf_analyze.py contract.pdf --xlsx         # both steps in one go
+```
+
+It reads a JSON file or piped stdin, and accepts either a single analysis object
+or a list of them — so several analyses become several rows in one sheet.
+
+One workbook, one sheet, one table: row 1 is the Georgian header (one column per
+field, `contract_data` then `tax_analysis`), and each analysis below it is one
+row, values copied verbatim. Headers come from `FIELD_LABELS` in
+[georgian.py](georgian.py) with the rest of the app's Georgian, not from a
+second list that could drift. A field missing from the JSON gets the same
+`არ არის მითითებული` the pipeline itself uses, so a partially filled contract
+still yields a complete, aligned row. `_audit` never reaches the sheet — it is a
+reasoning trace for scoring the model, not something an end user reads.
 
 ## How it works
 
