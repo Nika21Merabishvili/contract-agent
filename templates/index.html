@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Contract analyzer</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body {
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+      max-width: 640px;
+      margin: 3rem auto;
+      padding: 0 1.25rem;
+      line-height: 1.55;
+    }
+    h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+    p.lead { margin-top: 0; color: #666; }
+    .card {
+      border: 1px solid #d0d0d0;
+      border-radius: 10px;
+      padding: 1.5rem;
+      margin-top: 1.5rem;
+    }
+    label { font-weight: 600; display: block; margin-bottom: 0.5rem; }
+    input[type="file"] {
+      display: block;
+      width: 100%;
+      padding: 0.6rem;
+      border: 1px dashed #b0b0b0;
+      border-radius: 8px;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 1.1rem;
+      padding: 0.7rem 1.4rem;
+      font-size: 1rem;
+      border: none;
+      border-radius: 8px;
+      background: #1f4e78;
+      color: #fff;
+      cursor: pointer;
+    }
+    button:disabled { background: #9aa7b3; cursor: not-allowed; }
+    #status {
+      margin-top: 1.25rem;
+      padding: 0.85rem 1rem;
+      border-radius: 8px;
+      display: none;
+      white-space: pre-wrap;
+    }
+    #status.show { display: block; }
+    #status.working { background: #eef4fb; color: #1f4e78; }
+    #status.error   { background: #fdecec; color: #a12626; }
+    #status.done    { background: #eaf6ec; color: #1e6b30; }
+    .spinner {
+      display: inline-block;
+      width: 0.9em; height: 0.9em;
+      margin-right: 0.5em;
+      border: 2px solid currentColor;
+      border-right-color: transparent;
+      border-radius: 50%;
+      vertical-align: -0.1em;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    footer { margin-top: 2rem; color: #888; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
+  <h1>Contract analyzer</h1>
+  <p class="lead">
+    Upload a service contract (PDF). It is analysed locally against Article 104 of
+    the Georgian Tax Code, and you get the result back as an Excel workbook.
+  </p>
+
+  <div class="card">
+    <form id="form">
+      <label for="file">Contract PDF</label>
+      <input id="file" name="file" type="file" accept="application/pdf,.pdf" required>
+      <button id="submit" type="submit">Analyse &amp; download Excel</button>
+    </form>
+    <div id="status" role="status" aria-live="polite"></div>
+  </div>
+
+  <footer>Runs entirely on this machine via Ollama. Nothing is uploaded to the cloud.</footer>
+
+  <script>
+    const form = document.getElementById("form");
+    const fileInput = document.getElementById("file");
+    const button = document.getElementById("submit");
+    const statusEl = document.getElementById("status");
+
+    function setStatus(kind, html) {
+      statusEl.className = "show " + kind;
+      statusEl.innerHTML = html;
+    }
+
+    // Pull the server's suggested filename out of Content-Disposition when present.
+    function filenameFromHeader(response) {
+      const cd = response.headers.get("Content-Disposition") || "";
+      const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
+      return match ? decodeURIComponent(match[1]) : null;
+    }
+
+    function triggerDownload(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const file = fileInput.files[0];
+      if (!file) {
+        setStatus("error", "Please choose a PDF first.");
+        return;
+      }
+      if (!file.name.toLowerCase().endsWith(".pdf")) {
+        setStatus("error", "That is not a PDF. Please choose a .pdf contract.");
+        return;
+      }
+
+      button.disabled = true;
+      fileInput.disabled = true;
+      setStatus(
+        "working",
+        '<span class="spinner"></span>Analysing… this can take a minute. ' +
+        "The contract is read by a local model, one section at a time — please keep this tab open."
+      );
+
+      try {
+        const body = new FormData();
+        body.append("file", file);
+        const response = await fetch("/analyze", { method: "POST", body });
+
+        if (!response.ok) {
+          let message = "Something went wrong. Please try again.";
+          try {
+            const data = await response.json();
+            if (data && data.error) message = data.error;
+          } catch (_) { /* non-JSON error body; keep the default message */ }
+          setStatus("error", message);
+          return;
+        }
+
+        const blob = await response.blob();
+        const name =
+          filenameFromHeader(response) ||
+          file.name.replace(/\.pdf$/i, "") + ".xlsx";
+        triggerDownload(blob, name);
+        setStatus("done", "Done. Your Excel file has been downloaded: " + name);
+      } catch (_) {
+        setStatus("error", "Could not reach the server. Is it still running?");
+      } finally {
+        button.disabled = false;
+        fileInput.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# Python dependencies for nxia-contract-agent.
+#   pip install -r requirements.txt
+#
+# Also required, but not a pip package: Ollama 0.5.0+ with the model pulled --
+#   ollama pull qwen3.5:4b   (see README.md).
+
+ollama            # local model calls (steps 1-4)
+pypdf             # PDF text extraction (also the pdfplumber fallback)
+pdfplumber        # table-aware PDF extraction (recommended)
+openpyxl          # step 2: the Excel workbook
+flask             # the local web UI (app.py)
