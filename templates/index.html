@@ -30,6 +30,23 @@
       border-radius: 8px;
       box-sizing: border-box;
     }
+    #file-list {
+      list-style: none;
+      margin: 0.75rem 0 0;
+      padding: 0;
+      font-size: 0.92rem;
+      color: #555;
+    }
+    #file-list li {
+      padding: 0.15rem 0;
+      overflow-wrap: anywhere;
+    }
+    #file-list li::before { content: "📄 "; }
+    #file-count {
+      margin: 0.6rem 0 0;
+      font-size: 0.85rem;
+      color: #888;
+    }
     button {
       margin-top: 1.1rem;
       padding: 0.7rem 1.4rem;
@@ -52,6 +69,8 @@
     #status.working { background: #eef4fb; color: #1f4e78; }
     #status.error   { background: #fdecec; color: #a12626; }
     #status.done    { background: #eaf6ec; color: #1e6b30; }
+    #status.partial { background: #fff6e5; color: #8a5a00; }
+    #status ul { margin: 0.5rem 0 0; padding-left: 1.3rem; }
     .spinner {
       display: inline-block;
       width: 0.9em; height: 0.9em;
@@ -69,14 +88,17 @@
 <body>
   <h1>Contract analyzer</h1>
   <p class="lead">
-    Upload a service contract (PDF). It is analysed locally against Article 104 of
-    the Georgian Tax Code, and you get the result back as an Excel workbook.
+    Upload one or more service contracts (PDF). Each is analysed locally against
+    Article 104 of the Georgian Tax Code, and you get back a single Excel
+    workbook — one row per contract.
   </p>
 
   <div class="card">
     <form id="form">
-      <label for="file">Contract PDF</label>
-      <input id="file" name="file" type="file" accept="application/pdf,.pdf" required>
+      <label for="file">Contract PDF(s)</label>
+      <input id="file" name="file" type="file" accept="application/pdf,.pdf" multiple required>
+      <ul id="file-list"></ul>
+      <p id="file-count"></p>
       <button id="submit" type="submit">Analyse &amp; download Excel</button>
     </form>
     <div id="status" role="status" aria-live="polite"></div>
@@ -87,6 +109,8 @@
   <script>
     const form = document.getElementById("form");
     const fileInput = document.getElementById("file");
+    const fileListEl = document.getElementById("file-list");
+    const fileCountEl = document.getElementById("file-count");
     const button = document.getElementById("submit");
     const statusEl = document.getElementById("status");
 
@@ -95,11 +119,25 @@
       statusEl.innerHTML = html;
     }
 
-    // Pull the server's suggested filename out of Content-Disposition when present.
-    function filenameFromHeader(response) {
-      const cd = response.headers.get("Content-Disposition") || "";
-      const match = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(cd);
-      return match ? decodeURIComponent(match[1]) : null;
+    function escapeHtml(text) {
+      const div = document.createElement("div");
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    fileInput.addEventListener("change", () => {
+      const files = Array.from(fileInput.files);
+      fileListEl.innerHTML = files.map((f) => `<li>${escapeHtml(f.name)}</li>`).join("");
+      fileCountEl.textContent = files.length
+        ? `${files.length} file${files.length === 1 ? "" : "s"} selected`
+        : "";
+    });
+
+    function base64ToBlob(base64, mimeType) {
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return new Blob([bytes], { type: mimeType });
     }
 
     function triggerDownload(blob, filename) {
@@ -113,47 +151,59 @@
       URL.revokeObjectURL(url);
     }
 
+    const XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const file = fileInput.files[0];
-      if (!file) {
-        setStatus("error", "Please choose a PDF first.");
-        return;
-      }
-      if (!file.name.toLowerCase().endsWith(".pdf")) {
-        setStatus("error", "That is not a PDF. Please choose a .pdf contract.");
+      const files = Array.from(fileInput.files);
+      if (files.length === 0) {
+        setStatus("error", "Please choose at least one PDF first.");
         return;
       }
 
       button.disabled = true;
       fileInput.disabled = true;
-      setStatus(
-        "working",
-        '<span class="spinner"></span>Analysing… this can take a minute. ' +
-        "The contract is read by a local model, one section at a time — please keep this tab open."
-      );
+      const n = files.length;
+      const workingMessage = n === 1
+        ? "Analysing… this can take a minute."
+        : `Analysing ${n} contracts… this can take a few minutes. Each one is read by the ` +
+          "local model in its own turn, one after another.";
+      setStatus("working", `<span class="spinner"></span>${workingMessage}`);
 
       try {
         const body = new FormData();
-        body.append("file", file);
+        for (const f of files) body.append("file", f);
         const response = await fetch("/analyze", { method: "POST", body });
 
-        if (!response.ok) {
-          let message = "Something went wrong. Please try again.";
-          try {
-            const data = await response.json();
-            if (data && data.error) message = data.error;
-          } catch (_) { /* non-JSON error body; keep the default message */ }
-          setStatus("error", message);
+        let data;
+        try {
+          data = await response.json();
+        } catch (_) {
+          setStatus("error", "The server sent back something unexpected. Please try again.");
           return;
         }
 
-        const blob = await response.blob();
-        const name =
-          filenameFromHeader(response) ||
-          file.name.replace(/\.pdf$/i, "") + ".xlsx";
-        triggerDownload(blob, name);
-        setStatus("done", "Done. Your Excel file has been downloaded: " + name);
+        if (!response.ok) {
+          setStatus("error", data.error || "Something went wrong. Please try again.");
+          return;
+        }
+
+        const blob = base64ToBlob(data.workbook_base64, XLSX_MIME);
+        triggerDownload(blob, data.filename);
+
+        const failed = data.failed || [];
+        const succeeded = data.succeeded || [];
+        let message = `Downloaded ${escapeHtml(data.filename)} ` +
+          `(${succeeded.length} of ${n} contract${n === 1 ? "" : "s"} analysed).`;
+        if (failed.length > 0) {
+          message += "<br>The following could not be analysed and were left out:" +
+            "<ul>" +
+            failed.map((f) => `<li>${escapeHtml(f.name)} — ${escapeHtml(f.error)}</li>`).join("") +
+            "</ul>";
+          setStatus("partial", message);
+        } else {
+          setStatus("done", message);
+        }
       } catch (_) {
         setStatus("error", "Could not reach the server. Is it still running?");
       } finally {

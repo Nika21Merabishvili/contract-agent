@@ -101,7 +101,11 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Analyse a contract against Article 104 of the Georgian Tax Code; output JSON."
     )
-    parser.add_argument("pdf", type=Path, nargs="?", help="contract PDF; prompts if omitted")
+    parser.add_argument(
+        "pdfs", metavar="pdf", type=Path, nargs="*",
+        help="contract PDF(s); several run as a batch (one analyse_many pass) and "
+             "print one JSON array; prompts for one if omitted",
+    )
     parser.add_argument(
         "--article104",
         type=Path,
@@ -159,14 +163,22 @@ def main() -> None:
             )
         return
 
-    if args.pdf is None:
-        args.pdf = prompt_for_pdf()
-    elif not args.pdf.is_file():
-        raise SystemExit(f"error: no such file: {args.pdf}")
+    if not args.pdfs:
+        args.pdfs = [prompt_for_pdf()]
+    else:
+        missing = [p for p in args.pdfs if not p.is_file()]
+        if missing:
+            raise SystemExit("error: no such file: " + ", ".join(str(p) for p in missing))
 
-    pages = extract(args.pdf, args.pages)
+    if len(args.pdfs) > 1:
+        run_batch(args)
+        return
+
+    pdf = args.pdfs[0]
+
+    pages = extract(pdf, args.pages)
     words = sum(len(p.text.split()) for p in pages)
-    diag.progress(f"Extracted {len(pages)} page(s), ~{words} words from {args.pdf.name}")
+    diag.progress(f"Extracted {len(pages)} page(s), ~{words} words from {pdf.name}")
 
     if args.dump_text:
         for page in pages:
@@ -202,10 +214,69 @@ def main() -> None:
         # a failed run just because the export dependency is missing.
         from export_excel import write_workbook
 
-        xlsx_path = args.pdf.with_suffix(".xlsx") if args.xlsx == Path("-") else args.xlsx
+        xlsx_path = pdf.with_suffix(".xlsx") if args.xlsx == Path("-") else args.xlsx
         diag.progress(f"\nSaved: {write_workbook([result], xlsx_path)}")
 
     # Uncomment to also save the JSON to a file (next to the PDF, or at --out):
-    # out_path = args.out or args.pdf.with_suffix(".json")
+    # out_path = args.out or pdf.with_suffix(".json")
     # out_path.write_text(rendered + "\n", encoding="utf-8")
     # diag.progress(f"\nSaved: {out_path}")
+
+
+def run_batch(args: argparse.Namespace) -> None:
+    """Several PDFs on the command line: loop `pipeline.analyze_many` and print
+    one JSON array, one assembled object per contract that succeeded.
+
+    Reuses the exact function the web app's batch upload calls -- same
+    "continue past a failure" behaviour -- so a bad contract in the middle of a
+    long CLI batch does not cost the analysis already spent on the others.
+    `--dump-text` has no batch meaning (which of N contracts would it dump?) and
+    is refused rather than silently guessing.
+    """
+    if args.dump_text:
+        raise SystemExit("error: --dump-text takes exactly one PDF at a time")
+    if args.show_input:
+        diag.warn("note: --show-input will print a prompt for every call, for every contract")
+
+    from pipeline import analyze_many
+
+    diag.progress(f"Analysing {len(args.pdfs)} contracts... (Ctrl+C to stop)")
+    try:
+        items = analyze_many(
+            args.pdfs,
+            article_lang=args.article_lang,
+            article104=args.article104,
+            pages=args.pages,
+            think=args.think,
+        )
+    except Cancelled:
+        raise SystemExit(130)
+
+    succeeded = [item for item in items if item.ok]
+    failed = [item for item in items if not item.ok]
+    for item in failed:
+        diag.warn(f"  skipped {item.name}: {item.error}")
+
+    if not succeeded:
+        raise SystemExit("error: none of the given contracts could be analysed; see warnings above.")
+
+    rendered = json.dumps([item.result for item in succeeded], ensure_ascii=False, indent=2)
+    print(rendered)
+
+    if args.xlsx is not None:
+        from export_excel import write_workbook
+
+        if args.xlsx == Path("-"):
+            xlsx_path = Path(f"contracts_{len(succeeded)}.xlsx")
+        else:
+            xlsx_path = args.xlsx
+        records = [item.result for item in succeeded]
+        # A source column only earns its place once there is more than one row to
+        # tell apart -- same rule the web app's batch upload uses.
+        sources = [item.name for item in succeeded] if len(succeeded) > 1 else None
+        diag.progress(f"\nSaved: {write_workbook(records, xlsx_path, sources=sources)}")
+
+    if failed:
+        diag.warn(
+            f"\n{len(failed)} of {len(args.pdfs)} contract(s) were skipped -- see warnings above."
+        )

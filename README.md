@@ -25,9 +25,20 @@ python pdf_analyze.py contract.pdf --out result.json
 python pdf_analyze.py contract.pdf --article-lang ka   # reason over the Georgian statute
 python pdf_analyze.py --dump-article104   # verify Article 104 loads as readable text
 python pdf_analyze.py contract.pdf --show-input   # debug: see every prompt sent
+
+python pdf_analyze.py a.pdf b.pdf c.pdf    # batch: one JSON array, one contract at a time
+python pdf_analyze.py a.pdf b.pdf c.pdf --xlsx   # batch straight to one workbook
 ```
 
-The result is printed to stdout with three blocks:
+Give it more than one PDF and it runs each one through the same four-call
+pipeline in its own turn (see [How it works](#how-it-works)) — never several
+contracts in one prompt — then prints a JSON array instead of one object. A
+contract that fails (no extractable text, or no tax verdict reached) is skipped
+with a warning on stderr; the rest still come back. `--dump-text` needs exactly
+one PDF, since dumping text for a batch would be ambiguous.
+
+The result is printed to stdout with three blocks (a single object for one PDF,
+an array of these for a batch):
 
 - `contract_data` — 23 fields (parties, service type, value, dates, …),
   values in Georgian, proper nouns kept as written in the contract, missing
@@ -63,7 +74,12 @@ second list that could drift. A field missing from the JSON gets the same
 still yields a complete, aligned row. `_audit` never reaches the sheet — it is a
 reasoning trace for scoring the model, not something an end user reads.
 
-## Web app — upload a PDF, get the Excel back
+A batch of more than one contract (CLI `--xlsx`, or the web app) adds one
+leading "წყარო ფაილი" (source file) column so each row stays identifiable —
+`build_workbook(records, sources=[...])`. A single contract gets the plain sheet
+with no extra column, exactly as it always has.
+
+## Web app — upload contracts, get one Excel back
 
 For a non-technical user, [app.py](app.py) puts a one-page browser UI in front of
 the exact same pipeline — no terminal needed:
@@ -72,17 +88,23 @@ the exact same pipeline — no terminal needed:
 python app.py            # starts a local server and prints the URL
 ```
 
-Open the printed URL (http://127.0.0.1:5000), choose a contract PDF, and click the
-button. It runs steps 1 and 2 and downloads the same `.xlsx` the CLI produces. The
-page shows an "Analysing…" state while the local model works (this takes a minute),
-and a plain-language message if the PDF has no extractable text (scanned image) or
-the model cannot reach a tax verdict.
+Open the printed URL (http://127.0.0.1:5000) and choose one PDF or several —
+the file picker takes any number. Clicking the button analyses each contract in
+its own turn (exactly the CLI's batch behaviour above) and downloads one
+`.xlsx`: a single contract keeps the plain sheet and its own filename; several
+become one workbook (one row each, in upload order, with a source-file column)
+named `contracts_<n>_<date>.xlsx`. The page shows "Analysing…" (or, for a
+batch, "Analysing N contracts…") while the local model works, then reports the
+result — including which file(s), if any, could not be analysed (no extractable
+text, or no tax verdict reached) so a single bad PDF doesn't cost the rest of
+the batch.
 
-It is a thin wrapper: the analysis is `pipeline.analyze` and the workbook is
-`export_excel.build_workbook`, the same code the CLI calls. It runs locally and
-single-user — bound to `127.0.0.1`, talking only to the local Ollama, one request
-at a time. No cloud, no API keys, no database. The terminal workflow above is
-unchanged.
+It is a thin wrapper: the analysis is `pipeline.analyze_many` (looping
+`pipeline.analyze`, the same single-contract call the CLI makes) and the
+workbook is `export_excel.build_workbook`, the same code the CLI calls. It runs
+locally and single-user — bound to `127.0.0.1`, talking only to the local
+Ollama, one request at a time, no job queue. No cloud, no API keys, no
+database. The terminal workflow above is unchanged.
 
 ## How it works
 

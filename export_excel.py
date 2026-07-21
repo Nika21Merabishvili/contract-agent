@@ -56,6 +56,9 @@ HEADER_TEXT = "FFFFFF"
 WIDE_WIDTH = 55
 DEFAULT_WIDTH = 24
 
+# The optional leading column a batch export adds -- see build_workbook(sources=...).
+SOURCE_COLUMN_LABEL = "წყარო ფაილი"
+
 
 # --------------------------------------------------------------------------- #
 # Input
@@ -153,7 +156,7 @@ def cell_value(analysis: dict, block: str, key: str):
 # --------------------------------------------------------------------------- #
 
 
-def build_workbook(analyses: list[dict]) -> Workbook:
+def build_workbook(analyses: list[dict], *, sources: list[str] | None = None) -> Workbook:
     """Build the one-sheet workbook in memory and return it, unsaved.
 
     Split out from `write_workbook` so a caller that wants the bytes rather than a
@@ -161,8 +164,18 @@ def build_workbook(analyses: list[dict]) -> Workbook:
     `BytesIO` -- the web app streams the .xlsx straight back to the browser and
     never touches the filesystem for it. `write_workbook` is the file-writing
     wrapper around this, and the CLI still goes through it unchanged.
+
+    `sources`, if given, is one label per analysis (same order -- typically the
+    contract's filename) and adds a leading column identifying each row, so a
+    multi-contract batch stays legible on one sheet. It is None by default: a
+    single-contract call -- the CLI, or one contract analysed on its own -- gets
+    exactly the sheet it always has, with no extra column.
     """
+    if sources is not None and len(sources) != len(analyses):
+        raise ValueError(f"sources has {len(sources)} entries for {len(analyses)} analyses")
+
     pairs = columns(analyses)
+    offset = 1 if sources is not None else 0
 
     book = Workbook()
     sheet = book.active
@@ -175,7 +188,13 @@ def build_workbook(analyses: list[dict]) -> Workbook:
     edge = Side(style="thin", color="BFBFBF")
     body_border = Border(left=edge, right=edge, top=edge, bottom=edge)
 
-    for column, (_, key) in enumerate(pairs, start=1):
+    if sources is not None:
+        cell = sheet.cell(row=1, column=1, value=SOURCE_COLUMN_LABEL)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+
+    for column, (_, key) in enumerate(pairs, start=1 + offset):
         cell = sheet.cell(row=1, column=column, value=ka.field_label(key))
         cell.font = header_font
         cell.fill = header_fill
@@ -183,7 +202,12 @@ def build_workbook(analyses: list[dict]) -> Workbook:
     sheet.row_dimensions[1].height = 46
 
     for row, analysis in enumerate(analyses, start=2):
-        for column, (block, key) in enumerate(pairs, start=1):
+        if sources is not None:
+            cell = sheet.cell(row=row, column=1, value=sources[row - 2])
+            cell.font = body_font
+            cell.border = body_border
+            cell.alignment = Alignment(vertical="top")
+        for column, (block, key) in enumerate(pairs, start=1 + offset):
             cell = sheet.cell(row=row, column=column, value=cell_value(analysis, block, key))
             cell.font = body_font
             cell.border = body_border
@@ -191,22 +215,26 @@ def build_workbook(analyses: list[dict]) -> Workbook:
                 vertical="top", wrap_text=key in FREE_TEXT_FIELDS
             )
 
-    for column, (_, key) in enumerate(pairs, start=1):
+    if sources is not None:
+        sheet.column_dimensions["A"].width = DEFAULT_WIDTH
+    for column, (_, key) in enumerate(pairs, start=1 + offset):
         letter = get_column_letter(column)
         sheet.column_dimensions[letter].width = (
             WIDE_WIDTH if key in FREE_TEXT_FIELDS else DEFAULT_WIDTH
         )
 
-    last = get_column_letter(len(pairs))
-    sheet.freeze_panes = "A2"
+    last = get_column_letter(len(pairs) + offset)
+    sheet.freeze_panes = "B2" if sources is not None else "A2"
     sheet.auto_filter.ref = f"A1:{last}{len(analyses) + 1}"
 
     return book
 
 
-def write_workbook(analyses: list[dict], out_path: Path) -> Path:
+def write_workbook(
+    analyses: list[dict], out_path: Path, *, sources: list[str] | None = None
+) -> Path:
     """Write one sheet to `out_path`: a Georgian header row and one row per analysis."""
-    book = build_workbook(analyses)
+    book = build_workbook(analyses, sources=sources)
 
     out_path = out_path.expanduser()
     out_path.parent.mkdir(parents=True, exist_ok=True)
