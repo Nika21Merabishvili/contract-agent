@@ -13,13 +13,20 @@ citation -- cannot carry a spelling error.
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import georgian as ka
 from georgian import NOT_SPECIFIED
 
 import diagnostics as diag
 from errors import AnalysisFailure, ModelError
-from extraction import Page
+from extraction import (
+    Page,
+    extract,
+    find_article104,
+    load_text_document,
+    warn_if_unreviewed,
+)
 from ollama_client import ask_json
 from prompts import (
     GLOSSARY,
@@ -257,3 +264,37 @@ def analyse_contract(pages: list[Page], article: str, *, think: bool, show_input
     translated = call_translate(english, **kw)
 
     return assemble(parties, terms, tax, translated)
+
+
+# --------------------------------------------------------------------------- #
+# Top-level entry point: PDF path -> assembled JSON
+# --------------------------------------------------------------------------- #
+
+
+def analyze(
+    pdf_path: str | Path,
+    *,
+    article_lang: str = "en",
+    pages: str | None = None,
+    think: bool = False,
+) -> dict:
+    """Run the whole "PDF -> JSON" half of the pipeline as one call.
+
+    Composes exactly the steps `cli.main()` runs -- extract the contract, locate
+    and load Article 104, then the four model calls -- so a non-CLI caller (the
+    Flask web app) gets the assembled analysis dict without argument parsing or
+    stdout handling. It reuses the same functions the terminal path does; nothing
+    here reimplements analysis.
+
+    Diagnostics go to stderr exactly as in the CLI, and nothing is written to
+    stdout. The exceptions are the pipeline's own: `AnalysisFailure` when the model
+    cannot reach a tax verdict, `ModelError` for other model failures, and
+    `SystemExit` (raised by the extractor) when a PDF has no extractable text or is
+    password-protected. Callers surface these to the user.
+    """
+    pdf_path = Path(pdf_path)
+    contract_pages = extract(pdf_path, pages)
+    article_path = find_article104(None, article_lang)
+    article_text = load_text_document(article_path)
+    warn_if_unreviewed(article_path)
+    return analyse_contract(contract_pages, article_text, think=think, show_input=False)

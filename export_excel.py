@@ -153,8 +153,15 @@ def cell_value(analysis: dict, block: str, key: str):
 # --------------------------------------------------------------------------- #
 
 
-def write_workbook(analyses: list[dict], out_path: Path) -> Path:
-    """Write one sheet: a Georgian header row and one row per analysis."""
+def build_workbook(analyses: list[dict]) -> Workbook:
+    """Build the one-sheet workbook in memory and return it, unsaved.
+
+    Split out from `write_workbook` so a caller that wants the bytes rather than a
+    file on disk can save the returned book anywhere openpyxl accepts, including a
+    `BytesIO` -- the web app streams the .xlsx straight back to the browser and
+    never touches the filesystem for it. `write_workbook` is the file-writing
+    wrapper around this, and the CLI still goes through it unchanged.
+    """
     pairs = columns(analyses)
 
     book = Workbook()
@@ -193,6 +200,13 @@ def write_workbook(analyses: list[dict], out_path: Path) -> Path:
     last = get_column_letter(len(pairs))
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = f"A1:{last}{len(analyses) + 1}"
+
+    return book
+
+
+def write_workbook(analyses: list[dict], out_path: Path) -> Path:
+    """Write one sheet to `out_path`: a Georgian header row and one row per analysis."""
+    book = build_workbook(analyses)
 
     out_path = out_path.expanduser()
     out_path.parent.mkdir(parents=True, exist_ok=True)

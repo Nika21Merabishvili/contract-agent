@@ -8,10 +8,11 @@ Georgia using a local Qwen model via Ollama, and outputs structured JSON.
 
 - [Ollama](https://ollama.com) **0.5.0 or newer** (structured outputs), with the
   model pulled: `ollama pull qwen3.5:4b`
-- Python packages: `pip install ollama pypdf pdfplumber openpyxl`
-  (`pdfplumber` is optional but recommended — without it, tables reach the model
-  as interleaved columns and figures inside them get lost. `openpyxl` is needed
-  only for step 2, the Excel export.)
+- Python packages: `pip install -r requirements.txt`
+  (or `pip install ollama pypdf pdfplumber openpyxl flask`). `pdfplumber` is
+  optional but recommended — without it, tables reach the model as interleaved
+  columns and figures inside them get lost. `openpyxl` is needed only for step 2,
+  the Excel export; `flask` only for the web app.
 - The Georgian text of Article 104 in [knowledge/](knowledge/) — see
   [knowledge/README.md](knowledge/README.md).
 
@@ -61,6 +62,27 @@ second list that could drift. A field missing from the JSON gets the same
 `არ არის მითითებული` the pipeline itself uses, so a partially filled contract
 still yields a complete, aligned row. `_audit` never reaches the sheet — it is a
 reasoning trace for scoring the model, not something an end user reads.
+
+## Web app — upload a PDF, get the Excel back
+
+For a non-technical user, [app.py](app.py) puts a one-page browser UI in front of
+the exact same pipeline — no terminal needed:
+
+```
+python app.py            # starts a local server and prints the URL
+```
+
+Open the printed URL (http://127.0.0.1:5000), choose a contract PDF, and click the
+button. It runs steps 1 and 2 and downloads the same `.xlsx` the CLI produces. The
+page shows an "Analysing…" state while the local model works (this takes a minute),
+and a plain-language message if the PDF has no extractable text (scanned image) or
+the model cannot reach a tax verdict.
+
+It is a thin wrapper: the analysis is `pipeline.analyze` and the workbook is
+`export_excel.build_workbook`, the same code the CLI calls. It runs locally and
+single-user — bound to `127.0.0.1`, talking only to the local Ollama, one request
+at a time. No cloud, no API keys, no database. The terminal workflow above is
+unchanged.
 
 ## How it works
 
