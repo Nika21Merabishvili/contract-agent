@@ -1,0 +1,5 @@
+modal app stop nxia-ollama
+modal container list      # anything actively running right now?
+modal app list             # is the app deployed at all?
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\run_modal.ps1
