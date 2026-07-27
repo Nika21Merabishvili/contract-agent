@@ -39,9 +39,30 @@
     }
     #file-list li {
       padding: 0.15rem 0;
-      overflow-wrap: anywhere;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 0.5rem;
     }
-    #file-list li::before { content: "📄 "; }
+    #file-list li .file-name {
+      overflow-wrap: anywhere;
+      min-width: 0;
+    }
+    #file-list li .file-name::before { content: "📄 "; }
+    .remove-file {
+      flex: none;
+      margin-top: 0;
+      padding: 0.1rem 0.5rem;
+      font-size: 1rem;
+      line-height: 1.4;
+      border: none;
+      border-radius: 5px;
+      background: transparent;
+      color: #a12626;
+      cursor: pointer;
+    }
+    .remove-file:hover:not(:disabled) { background: #fdecec; }
+    .remove-file:disabled { color: #bbb; cursor: not-allowed; }
     #file-count {
       margin: 0.6rem 0 0;
       font-size: 0.85rem;
@@ -58,6 +79,11 @@
       cursor: pointer;
     }
     button:disabled { background: #9aa7b3; cursor: not-allowed; }
+    #stop {
+      margin-left: 0.6rem;
+      background: #a12626;
+    }
+    #stop:disabled { background: #d9a3a3; cursor: not-allowed; }
     #status {
       margin-top: 1.25rem;
       padding: 0.85rem 1rem;
@@ -70,6 +96,7 @@
     #status.error   { background: #fdecec; color: #a12626; }
     #status.done    { background: #eaf6ec; color: #1e6b30; }
     #status.partial { background: #fff6e5; color: #8a5a00; }
+    #status.stopped { background: #f0f0f0; color: #555; }
     #status ul { margin: 0.5rem 0 0; padding-left: 1.3rem; }
     .spinner {
       display: inline-block;
@@ -100,6 +127,7 @@
       <ul id="file-list"></ul>
       <p id="file-count"></p>
       <button id="submit" type="submit">Analyse &amp; download Excel</button>
+      <button id="stop" type="button" hidden>Stop</button>
     </form>
     <div id="status" role="status" aria-live="polite"></div>
   </div>
@@ -112,7 +140,15 @@
     const fileListEl = document.getElementById("file-list");
     const fileCountEl = document.getElementById("file-count");
     const button = document.getElementById("submit");
+    const stopButton = document.getElementById("stop");
     const statusEl = document.getElementById("status");
+
+    // The source of truth for "what will be submitted" once removal exists --
+    // a native FileList (fileInput.files) can't have one item deleted from it.
+    // fileInput.files is kept in sync (via syncInputFiles) purely so the
+    // browser's own native file-input label doesn't show a stale count.
+    let selectedFiles = [];
+    let busy = false; // true while /analyze is in flight; gates removal and Stop
 
     function setStatus(kind, html) {
       statusEl.className = "show " + kind;
@@ -125,12 +161,48 @@
       return div.innerHTML;
     }
 
-    fileInput.addEventListener("change", () => {
-      const files = Array.from(fileInput.files);
-      fileListEl.innerHTML = files.map((f) => `<li>${escapeHtml(f.name)}</li>`).join("");
-      fileCountEl.textContent = files.length
-        ? `${files.length} file${files.length === 1 ? "" : "s"} selected`
+    function syncInputFiles() {
+      const dt = new DataTransfer();
+      selectedFiles.forEach((f) => dt.items.add(f));
+      fileInput.files = dt.files;
+    }
+
+    function renderFileList() {
+      fileListEl.innerHTML = selectedFiles.map((f, i) => `
+        <li>
+          <span class="file-name">${escapeHtml(f.name)}</span>
+          <button type="button" class="remove-file" data-index="${i}"
+                  aria-label="Remove ${escapeHtml(f.name)}" ${busy ? "disabled" : ""}>✕</button>
+        </li>
+      `).join("");
+      fileCountEl.textContent = selectedFiles.length
+        ? `${selectedFiles.length} file${selectedFiles.length === 1 ? "" : "s"} selected`
         : "";
+    }
+
+    fileInput.addEventListener("change", () => {
+      selectedFiles = Array.from(fileInput.files);
+      renderFileList();
+    });
+
+    fileListEl.addEventListener("click", (event) => {
+      if (busy) return;
+      const removeBtn = event.target.closest(".remove-file");
+      if (!removeBtn) return;
+      selectedFiles.splice(Number(removeBtn.dataset.index), 1);
+      syncInputFiles();
+      renderFileList();
+    });
+
+    stopButton.addEventListener("click", async () => {
+      stopButton.disabled = true;
+      stopButton.textContent = "Stopping…";
+      try {
+        await fetch("/cancel", { method: "POST" });
+      } catch (_) {
+        // The in-flight /analyze request just runs to completion instead of
+        // stopping early -- not fatal, nothing else to do from here.
+      }
     });
 
     function base64ToBlob(base64, mimeType) {
@@ -155,7 +227,7 @@
 
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
-      const files = Array.from(fileInput.files);
+      const files = selectedFiles;
       if (files.length === 0) {
         setStatus("error", "Please choose at least one PDF first.");
         return;
@@ -163,6 +235,11 @@
 
       button.disabled = true;
       fileInput.disabled = true;
+      busy = true;
+      renderFileList(); // disables each remove button
+      stopButton.hidden = false;
+      stopButton.disabled = false;
+      stopButton.textContent = "Stop";
       const n = files.length;
       const workingMessage = n === 1
         ? "Analysing… this can take a minute."
@@ -188,6 +265,11 @@
           return;
         }
 
+        if (data.cancelled) {
+          setStatus("stopped", data.message || "Analysis stopped.");
+          return;
+        }
+
         const blob = base64ToBlob(data.workbook_base64, XLSX_MIME);
         triggerDownload(blob, data.filename);
 
@@ -209,6 +291,9 @@
       } finally {
         button.disabled = false;
         fileInput.disabled = false;
+        busy = false;
+        renderFileList(); // re-enables each remove button
+        stopButton.hidden = true;
       }
     });
   </script>

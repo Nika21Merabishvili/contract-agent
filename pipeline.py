@@ -13,6 +13,7 @@ citation -- cannot carry a spelling error.
 from __future__ import annotations
 
 import json
+import threading
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -235,9 +236,16 @@ def assemble(parties: dict, terms: dict, tax: dict, translated: dict) -> dict:
     }
 
 
-def analyse_contract(pages: list[Page], article: str, *, think: bool, show_input: bool) -> dict:
+def analyse_contract(
+    pages: list[Page],
+    article: str,
+    *,
+    think: bool,
+    show_input: bool,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     contract = "\n\n".join(f"[page {p.number}]\n{p.text}" for p in pages)
-    kw = {"think": think, "show_input": show_input}
+    kw = {"think": think, "show_input": show_input, "cancel_event": cancel_event}
 
     diag.progress("\n[1/4] parties")
     parties = call_parties(contract, **kw)
@@ -279,6 +287,7 @@ def analyze(
     article104: str | Path | None = None,
     pages: str | None = None,
     think: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run the whole "PDF -> JSON" half of the pipeline as one call.
 
@@ -293,6 +302,10 @@ def analyze(
     applies when several PDFs route through here via `analyze_many`. The web app
     never sets it and gets the default lookup, same as before.
 
+    `cancel_event`, when given, is forwarded to every model call (see
+    ollama_client.ask) so a caller -- the web app's Stop button -- can abort
+    mid-contract, not just between contracts.
+
     Diagnostics go to stderr exactly as in the CLI, and nothing is written to
     stdout. The exceptions are the pipeline's own: `AnalysisFailure` when the model
     cannot reach a tax verdict, `ModelError` for other model failures, and
@@ -305,7 +318,9 @@ def analyze(
     article_path = find_article104(explicit, article_lang)
     article_text = load_text_document(article_path)
     warn_if_unreviewed(article_path)
-    return analyse_contract(contract_pages, article_text, think=think, show_input=False)
+    return analyse_contract(
+        contract_pages, article_text, think=think, show_input=False, cancel_event=cancel_event
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -338,6 +353,7 @@ def analyze_many(
     article104: str | Path | None = None,
     pages: str | None = None,
     think: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> list[BatchItem]:
     """Run `analyze` once per PDF, sequentially, each in its own fresh model context.
 
@@ -353,7 +369,8 @@ def analyze_many(
     records the reason and the loop moves on, so one bad PDF never costs the
     analysis already spent on the others. Ctrl+C is the one exception: it aborts
     the whole batch rather than just skipping the current contract, the same as
-    it would a single-contract run.
+    it would a single-contract run. `cancel_event` (the web UI's Stop button) is
+    the same kind of exception, for the same reason -- see Cancelled below.
     """
     items: list[BatchItem] = []
     total = len(pdf_paths)
@@ -362,7 +379,8 @@ def analyze_many(
         diag.progress(f"\n===== contract {index}/{total}: {path.name} =====")
         try:
             result = analyze(
-                path, article_lang=article_lang, article104=article104, pages=pages, think=think
+                path, article_lang=article_lang, article104=article104, pages=pages,
+                think=think, cancel_event=cancel_event,
             )
             items.append(BatchItem(name=path.name, result=result, error=None))
         except Cancelled:

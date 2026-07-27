@@ -15,8 +15,10 @@ stream the result back, delete the temp files. The terminal workflow is
 untouched and keeps working exactly as before.
 
 Local and single-user by design: it binds to 127.0.0.1, talks only to the local
-Ollama, and handles one request at a time. No cloud, no API keys, no database,
-no job queue -- a batch is just a loop within one synchronous request.
+Ollama, and has no cloud, no API keys, no database, no job queue -- a batch is
+just a loop within one request. It is threaded (see main()) only so the Stop
+button's /cancel request can reach the server while a batch is still running;
+_analysis_lock below keeps it to one batch at a time regardless.
 
     python app.py            # starts the server and prints the URL
 """
@@ -26,6 +28,7 @@ from __future__ import annotations
 import base64
 import io
 import sys
+import threading
 import traceback
 from datetime import date
 from pathlib import Path
@@ -35,6 +38,7 @@ from flask import Flask, jsonify, render_template, request
 from werkzeug.exceptions import RequestEntityTooLarge
 from werkzeug.utils import secure_filename
 
+from errors import Cancelled
 from export_excel import build_workbook
 from pipeline import analyze_many
 
@@ -50,6 +54,18 @@ MAX_UPLOAD_BYTES = 200 * 1024 * 1024
 
 app = Flask(__name__)
 app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
+
+# Cleared at the start of every /analyze and polled inside the streaming
+# Ollama call (see ollama_client.ask), so the Stop button -- which just sets
+# this -- takes effect within about one token rather than waiting for a whole
+# contract, or the whole batch, to finish.
+_cancel_event = threading.Event()
+
+# One flag shared by every request only makes sense if there is ever just one
+# analysis in flight. This turns a second /analyze (a double click, a second
+# tab) into a clean 409 instead of two batches quietly racing on the one
+# _cancel_event above.
+_analysis_lock = threading.Lock()
 
 
 def _fail(message: str, status: int):
@@ -71,6 +87,24 @@ def index():
 
 @app.post("/analyze")
 def analyze_contract():
+    """Acquire _analysis_lock and delegate to _run_analysis; see its docstring
+    for the actual request/response contract.
+
+    Kept separate from _run_analysis so the lock is released on every exit --
+    every early return, the success path, and any exception -- via one `finally`
+    here rather than one at the end of each of that function's several returns.
+    A busy lock means a batch is already running: reported as 409, not queued,
+    since queuing behind a multi-minute batch would just look like a hang.
+    """
+    if not _analysis_lock.acquire(blocking=False):
+        return _fail("An analysis is already running. Wait for it to finish, or stop it.", 409)
+    try:
+        return _run_analysis()
+    finally:
+        _analysis_lock.release()
+
+
+def _run_analysis():
     """Take one or more uploaded PDFs, analyse each with the real pipeline, and
     return one workbook built from every contract that could be analysed.
 
@@ -80,8 +114,11 @@ def analyze_contract():
     .xlsx bytes). The page decodes that back into a file, triggers the download,
     and renders `failed` as the batch report. A total failure -- nothing usable
     was uploaded, or none of it could be analysed -- returns the same plain
-    `{"error": ...}` shape the original single-file version always used.
+    `{"error": ...}` shape the original single-file version always used. If the
+    Stop button cancels the batch, the response instead has `cancelled: true`
+    (see the Cancelled handler below) and no workbook.
     """
+    _cancel_event.clear()
     uploads = [f for f in request.files.getlist("file") if f and f.filename]
     if not uploads:
         return _fail("No file was uploaded. Choose one or more contract PDFs and try again.", 400)
@@ -127,7 +164,12 @@ def analyze_contract():
             return _fail(f"No usable PDF was uploaded. {details}", 400)
 
         try:
-            items = analyze_many(good_paths)
+            items = analyze_many(good_paths, cancel_event=_cancel_event)
+        except Cancelled:
+            # Same all-or-nothing semantics as Ctrl+C on the CLI (see
+            # pipeline.analyze_many): contracts already finished in this batch
+            # are discarded, not partially exported.
+            return jsonify(cancelled=True, message="Analysis stopped. No file was downloaded.")
         except Exception:  # noqa: BLE001 -- last resort: never leak a stack trace to the page
             traceback.print_exc(file=sys.stderr)
             return _fail(
@@ -174,13 +216,29 @@ def analyze_contract():
     )
 
 
+@app.post("/cancel")
+def cancel_analysis():
+    """The Stop button. Sets _cancel_event, which the in-flight /analyze request
+    (if any) is polling inside its current Ollama call (see ollama_client.ask)
+    and will notice within about one streamed token.
+
+    Always returns success, including when nothing is running -- it is just a
+    flag, harmlessly left set until the next /analyze clears it. This route only
+    exists to set that flag; it does not itself wait for the batch to stop.
+    """
+    _cancel_event.set()
+    return jsonify(ok=True)
+
+
 def main() -> None:
     host, port = "127.0.0.1", 5000
     print(f"nxia-contract-agent web UI  ->  http://{host}:{port}   (Ctrl+C to stop)")
-    # threaded=False: one request at a time, synchronously -- this is a local,
-    # single-user tool, and the analysis (looped over every uploaded contract) is
-    # the only long-running operation.
-    app.run(host=host, port=port, threaded=False)
+    # threaded=True: a batch can run for minutes, and the Stop button's /cancel
+    # request needs to reach the server while /analyze is still running -- with
+    # the old threaded=False it would just queue behind it and never arrive in
+    # time to matter. _analysis_lock (module level, above) keeps this from
+    # turning into two concurrent batches; it is still a local, single-user tool.
+    app.run(host=host, port=port, threaded=True)
 
 
 if __name__ == "__main__":
