@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import threading
 
 from ollama import chat
 
@@ -113,13 +114,26 @@ def extract_json_object(raw: str) -> str:
     return text[start:]  # unbalanced; let json.loads raise
 
 
-def ask(prompt: str, schema: dict, *, label: str, think: bool, show_input: bool) -> str:
+def ask(
+    prompt: str,
+    schema: dict,
+    *,
+    label: str,
+    think: bool,
+    show_input: bool,
+    cancel_event: threading.Event | None = None,
+) -> str:
     """One Ollama call, with num_ctx sized to the prompt.
 
     Without an explicit num_ctx Ollama defaults to a small window and silently
     discards everything above it. num_ctx is logged alongside the server's own
     prompt_eval_count so truncation is visible rather than inferred. Every line
     of output here goes to stderr (see diagnostics) so stdout stays JSON-only.
+
+    `cancel_event`, when given, is polled once before the call starts and once
+    per streamed chunk -- the same granularity Ctrl+C already gets below -- so
+    the web UI's Stop button (which just sets this event) takes effect within
+    about one token rather than waiting for the whole call to finish.
     """
     needed = estimate_tokens(prompt) + RESPONSE_HEADROOM
     num_ctx = max(CTX_MIN, min(CTX_MAX, needed))
@@ -130,6 +144,9 @@ def ask(prompt: str, schema: dict, *, label: str, think: bool, show_input: bool)
             f"limit.\nUse --pages to send fewer contract pages, or raise CTX_MAX if "
             "your hardware allows it."
         )
+
+    if cancel_event is not None and cancel_event.is_set():
+        raise Cancelled
 
     if show_input:
         show_prompt(label, prompt)
@@ -147,6 +164,9 @@ def ask(prompt: str, schema: dict, *, label: str, think: bool, show_input: bool)
     final = None
     try:
         for part in stream:
+            if cancel_event is not None and cancel_event.is_set():
+                stream.close()
+                raise Cancelled
             piece = part.message.content or ""
             if piece:
                 parts.append(piece)
@@ -190,12 +210,15 @@ def ask_json(
     think: bool,
     show_input: bool,
     attempts: int = 3,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Call the model, parse, validate, and retry with the complaint fed back.
 
     This is where every constraint Ollama's grammar cannot express is enforced --
     date formats above all, since `pattern` makes the server reject the request
-    outright.
+    outright. `cancel_event` is passed straight through to `ask`; Cancelled is
+    not one of the exceptions the retry loop below catches, so it breaks out of
+    the retry loop immediately rather than being treated as a rejected answer.
     """
     complaint = None
     for attempt in range(1, attempts + 1):
@@ -203,7 +226,10 @@ def ask_json(
             f"{prompt}\n\n--- YOUR PREVIOUS ANSWER WAS REJECTED ---\n{complaint}\n"
             "Return the whole object again, corrected."
         )
-        raw = ask(text, schema, label=f"{label} #{attempt}", think=think, show_input=show_input)
+        raw = ask(
+            text, schema, label=f"{label} #{attempt}", think=think,
+            show_input=show_input, cancel_event=cancel_event,
+        )
         try:
             data = json.loads(extract_json_object(raw))
             if not isinstance(data, dict):

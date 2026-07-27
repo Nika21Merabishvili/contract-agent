@@ -13,13 +13,15 @@ citation -- cannot carry a spelling error.
 from __future__ import annotations
 
 import json
+import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 import georgian as ka
 from georgian import NOT_SPECIFIED
 
 import diagnostics as diag
-from errors import AnalysisFailure, ModelError
+from errors import AnalysisFailure, Cancelled, ModelError
 from extraction import (
     Page,
     extract,
@@ -234,9 +236,16 @@ def assemble(parties: dict, terms: dict, tax: dict, translated: dict) -> dict:
     }
 
 
-def analyse_contract(pages: list[Page], article: str, *, think: bool, show_input: bool) -> dict:
+def analyse_contract(
+    pages: list[Page],
+    article: str,
+    *,
+    think: bool,
+    show_input: bool,
+    cancel_event: threading.Event | None = None,
+) -> dict:
     contract = "\n\n".join(f"[page {p.number}]\n{p.text}" for p in pages)
-    kw = {"think": think, "show_input": show_input}
+    kw = {"think": think, "show_input": show_input, "cancel_event": cancel_event}
 
     diag.progress("\n[1/4] parties")
     parties = call_parties(contract, **kw)
@@ -275,8 +284,10 @@ def analyze(
     pdf_path: str | Path,
     *,
     article_lang: str = "en",
+    article104: str | Path | None = None,
     pages: str | None = None,
     think: bool = False,
+    cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run the whole "PDF -> JSON" half of the pipeline as one call.
 
@@ -286,6 +297,15 @@ def analyze(
     stdout handling. It reuses the same functions the terminal path does; nothing
     here reimplements analysis.
 
+    `article104` overrides the default knowledge-file lookup (see
+    extraction.find_article104) -- it is how the CLI's --article104 flag still
+    applies when several PDFs route through here via `analyze_many`. The web app
+    never sets it and gets the default lookup, same as before.
+
+    `cancel_event`, when given, is forwarded to every model call (see
+    ollama_client.ask) so a caller -- the web app's Stop button -- can abort
+    mid-contract, not just between contracts.
+
     Diagnostics go to stderr exactly as in the CLI, and nothing is written to
     stdout. The exceptions are the pipeline's own: `AnalysisFailure` when the model
     cannot reach a tax verdict, `ModelError` for other model failures, and
@@ -294,7 +314,90 @@ def analyze(
     """
     pdf_path = Path(pdf_path)
     contract_pages = extract(pdf_path, pages)
-    article_path = find_article104(None, article_lang)
+    explicit = Path(article104) if article104 is not None else None
+    article_path = find_article104(explicit, article_lang)
     article_text = load_text_document(article_path)
     warn_if_unreviewed(article_path)
-    return analyse_contract(contract_pages, article_text, think=think, show_input=False)
+    return analyse_contract(
+        contract_pages, article_text, think=think, show_input=False, cancel_event=cancel_event
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Batch entry point: several PDF paths -> one result per contract
+# --------------------------------------------------------------------------- #
+
+
+@dataclass
+class BatchItem:
+    """One contract's outcome within a batch.
+
+    Exactly one of `result`/`error` is set. `name` is for reporting only --
+    upload order is carried by the list `analyze_many` returns, not by this
+    field, so callers must keep results in the order they came back.
+    """
+
+    name: str
+    result: dict | None
+    error: str | None
+
+    @property
+    def ok(self) -> bool:
+        return self.error is None
+
+
+def analyze_many(
+    pdf_paths: list[str | Path],
+    *,
+    article_lang: str = "en",
+    article104: str | Path | None = None,
+    pages: str | None = None,
+    think: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> list[BatchItem]:
+    """Run `analyze` once per PDF, sequentially, each in its own fresh model context.
+
+    This is a loop over the existing single-contract pipeline, not a second
+    implementation: every contract gets a full, independent `analyze()` call, in
+    upload order. Contracts are never combined into one prompt -- the model's
+    context window is sized for one contract at a time (see
+    ollama_client.CTX_MAX), and independent contracts have nothing to gain from
+    sharing a call.
+
+    A contract that fails -- no extractable text, a tax verdict the model could
+    not reach, or any other error -- does not stop the batch: its `BatchItem`
+    records the reason and the loop moves on, so one bad PDF never costs the
+    analysis already spent on the others. Ctrl+C is the one exception: it aborts
+    the whole batch rather than just skipping the current contract, the same as
+    it would a single-contract run. `cancel_event` (the web UI's Stop button) is
+    the same kind of exception, for the same reason -- see Cancelled below.
+    """
+    items: list[BatchItem] = []
+    total = len(pdf_paths)
+    for index, raw_path in enumerate(pdf_paths, start=1):
+        path = Path(raw_path)
+        diag.progress(f"\n===== contract {index}/{total}: {path.name} =====")
+        try:
+            result = analyze(
+                path, article_lang=article_lang, article104=article104, pages=pages,
+                think=think, cancel_event=cancel_event,
+            )
+            items.append(BatchItem(name=path.name, result=result, error=None))
+        except Cancelled:
+            raise
+        except AnalysisFailure as exc:
+            diag.warn(f"  [{path.name}] no tax verdict reached -- skipping: {exc}")
+            items.append(BatchItem(name=path.name, result=None, error=str(exc)))
+        except SystemExit as exc:
+            message = (str(exc.code) if exc.code else "the PDF could not be read").removeprefix(
+                "error: "
+            )
+            diag.warn(f"  [{path.name}] {message} -- skipping")
+            items.append(BatchItem(name=path.name, result=None, error=message))
+        except ModelError as exc:
+            diag.warn(f"  [{path.name}] model error -- skipping: {exc}")
+            items.append(BatchItem(name=path.name, result=None, error=str(exc)))
+        except Exception as exc:  # noqa: BLE001 -- one bad contract must not sink the batch
+            diag.warn(f"  [{path.name}] unexpected error -- skipping: {exc}")
+            items.append(BatchItem(name=path.name, result=None, error="analysis failed unexpectedly"))
+    return items
