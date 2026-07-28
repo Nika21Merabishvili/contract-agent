@@ -17,7 +17,7 @@ from ollama import chat
 import diagnostics as diag
 from errors import Cancelled, ModelError
 
-MODEL = "qwen3.5:4b"
+MODEL = "qwen3.6:35b"
 
 # The model can address 262144 tokens, but a context that large allocates a huge
 # KV cache -- and `ollama ps` shows this machine running the model ~97% on CPU,

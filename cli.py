@@ -22,6 +22,7 @@ from extraction import (
     warn_if_unreviewed,
 )
 from pipeline import analyse_contract
+from treaty_rates import refresh_all_treaty_rates
 
 
 def pick_file_dialog() -> Path | None:
@@ -188,6 +189,7 @@ def main() -> None:
     article_text = load_text_document(article_path)
     warn_if_unreviewed(article_path)
     diag.progress(f"Article 104 loaded from {article_path.name}")
+    refresh_all_treaty_rates()
     diag.progress("Analysing contract... (Ctrl+C to stop)")
 
     try:
@@ -240,6 +242,7 @@ def run_batch(args: argparse.Namespace) -> None:
 
     from pipeline import analyze_many
 
+    refresh_all_treaty_rates()
     diag.progress(f"Analysing {len(args.pdfs)} contracts... (Ctrl+C to stop)")
     try:
         items = analyze_many(

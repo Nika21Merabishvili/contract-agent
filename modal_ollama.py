@@ -24,7 +24,7 @@ import time
 
 import modal
 
-MODEL = "qwen3.5:4b"
+MODEL = "qwen3.6:35b"
 OLLAMA_PORT = 11434
 
 image = (
@@ -46,7 +46,7 @@ app = modal.App("nxia-ollama", image=image)
 
 
 @app.function(
-    gpu="A10G",              # plenty for a 4B model; drop to "T4" to save cost, or raise for a bigger model later
+    gpu="A10G",              # 24GB: qwen3.6:35b weights (~23GB) leave little headroom for KV cache -- watch for OOM
     scaledown_window=300,    # keep the container warm 5 min after the last request, then scale to zero
     timeout=600,
 )

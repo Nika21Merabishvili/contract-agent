@@ -41,6 +41,7 @@ from werkzeug.utils import secure_filename
 from errors import Cancelled
 from export_excel import build_workbook
 from pipeline import analyze_many
+from treaty_rates import refresh_all_treaty_rates
 
 # Georgian filenames and diagnostics must not raise on a cp1252 Windows console;
 # reconfigure the same way the CLI entry points do.
@@ -163,6 +164,7 @@ def _run_analysis():
             details = "; ".join(f"{f['name']} ({f['error']})" for f in precheck_failed)
             return _fail(f"No usable PDF was uploaded. {details}", 400)
 
+        refresh_all_treaty_rates()
         try:
             items = analyze_many(good_paths, cancel_event=_cancel_event)
         except Cancelled:

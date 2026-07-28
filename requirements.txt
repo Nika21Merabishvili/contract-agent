@@ -9,3 +9,4 @@ pypdf             # PDF text extraction (also the pdfplumber fallback)
 pdfplumber        # table-aware PDF extraction (recommended)
 openpyxl          # step 2: the Excel workbook
 flask             # the local web UI (app.py)
+requests          # treaty_rates.py: fetches the mof.ge double-taxation table
