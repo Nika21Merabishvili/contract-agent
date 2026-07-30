@@ -3,10 +3,13 @@
 #
 # Also required, but not pip packages:
 #   - Ollama 0.5.0+ with the model pulled -- ollama pull qwen3.5:4b (see README.md).
-#   - For scanned (image-only) PDFs: the Tesseract OCR engine, a system binary,
-#     WITH the English and Georgian language packs (eng + kat). See "Scanned
-#     PDFs" in README.md for install instructions. Only needed when a PDF has
-#     no embedded text layer; everything else works without it.
+#   - For scanned (image-only) PDFs: OCR runs only when a PDF has no embedded
+#     text layer; everything else works without it. Two engines are available:
+#       * glm-ocr (default) -- a vision model served by Ollama: ollama pull
+#         glm-ocr:bf16. No system binary or language packs needed.
+#       * Tesseract (--ocr-engine tesseract) -- a system binary WITH the English
+#         and Georgian language packs (eng + kat). See "Scanned PDFs" in
+#         README.md for install instructions.
 
 ollama            # local model calls (steps 1-4)
 pypdf             # PDF text extraction (also the pdfplumber fallback)

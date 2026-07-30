@@ -295,6 +295,7 @@ def analyze(
     pages: str | None = None,
     think: bool = False,
     use_ocr: bool = True,
+    ocr_engine: str = "glm",
     cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run the whole "PDF -> JSON" half of the pipeline as one call.
@@ -321,7 +322,7 @@ def analyze(
     password-protected. Callers surface these to the user.
     """
     pdf_path = Path(pdf_path)
-    contract_pages = extract(pdf_path, pages, use_ocr=use_ocr)
+    contract_pages = extract(pdf_path, pages, use_ocr=use_ocr, ocr_engine=ocr_engine)
     explicit = Path(article104) if article104 is not None else None
     article_path = find_article104(explicit, article_lang)
     article_text = load_text_document(article_path)
@@ -362,6 +363,7 @@ def analyze_many(
     pages: str | None = None,
     think: bool = False,
     use_ocr: bool = True,
+    ocr_engine: str = "glm",
     cancel_event: threading.Event | None = None,
 ) -> list[BatchItem]:
     """Run `analyze` once per PDF, sequentially, each in its own fresh model context.
@@ -389,7 +391,7 @@ def analyze_many(
         try:
             result = analyze(
                 path, article_lang=article_lang, article104=article104, pages=pages,
-                think=think, use_ocr=use_ocr, cancel_event=cancel_event,
+                think=think, use_ocr=use_ocr, ocr_engine=ocr_engine, cancel_event=cancel_event,
             )
             items.append(BatchItem(name=path.name, result=result, error=None))
         except Cancelled:

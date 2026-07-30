@@ -117,16 +117,27 @@ def render_table(rows: list[list[str | None]]) -> str:
     return "\n".join(lines)
 
 
-def extract(path: Path, page_spec: str | None = None, *, use_ocr: bool = True) -> list[Page]:
+def extract(
+    path: Path,
+    page_spec: str | None = None,
+    *,
+    use_ocr: bool = True,
+    ocr_engine: str = "glm",
+) -> list[Page]:
     """Extract contract text; OCR the page images if there is no text layer.
 
     The embedded text layer is always preferred -- when a PDF has one, it is
     exact and this behaves exactly as it always has, OCR never runs. Only when
     embedded extraction yields nothing (or implausibly little -- see
-    plausible_text) does the scanned-document fallback kick in: ocr.py renders
-    the pages and reads them with Tesseract (English + Georgian), and the
-    recovered text flows into the same pipeline. Pages that came through OCR
-    are marked (Page.ocr) so the result can carry a verify-these-values flag.
+    plausible_text) does the scanned-document fallback kick in: the pages are
+    rendered and transcribed, and the recovered text flows into the same
+    pipeline. Pages that came through OCR are marked (Page.ocr) so the result
+    can carry a verify-these-values flag.
+
+    `ocr_engine` selects the transcriber: "glm" (default) uses the glm-ocr
+    vision model via Ollama (ocr_glm.py); "tesseract" uses the classic Tesseract
+    engine with English + Georgian language data (ocr.py). Both produce the same
+    list[Page] shape.
 
     `use_ocr=False` (the CLI's --no-ocr) skips the fallback for debugging; a
     scanned PDF then fails with the no-text message, as it did before OCR
@@ -142,18 +153,26 @@ def extract(path: Path, page_spec: str | None = None, *, use_ocr: bool = True) -
             "The pages are probably scanned images. Re-run without --no-ocr to OCR them."
         )
 
-    # Imported here, not at module scope: pytesseract/pypdfium2 (and the
-    # Tesseract binary) are only requirements when a scanned PDF actually
-    # shows up. ocr.py imports helpers from this module, so a top-level
-    # import would also be circular.
-    from ocr import OcrUnavailable, ocr_pdf
+    # Imported here, not at module scope: the OCR backends (ollama / pypdfium2 /
+    # pytesseract and the Tesseract binary) are only requirements when a scanned
+    # PDF actually shows up, and both ocr modules import helpers from here, so a
+    # top-level import would also be circular. OcrUnavailable is defined in
+    # ocr.py and shared by both engines.
+    from ocr import OcrUnavailable
+
+    if ocr_engine == "tesseract":
+        from ocr import ocr_pdf as run_ocr
+        engine_label = "Tesseract, English+Georgian"
+    else:
+        from ocr_glm import ocr_pdf_glm as run_ocr
+        engine_label = "glm-ocr vision model"
 
     diag.warn(
-        f"  {path.name} has no embedded text layer -- running OCR (English+Georgian).\n"
+        f"  {path.name} has no embedded text layer -- running OCR ({engine_label}).\n"
         "  This takes noticeably longer than a normal PDF."
     )
     try:
-        ocr_pages = ocr_pdf(path, page_spec)
+        ocr_pages = run_ocr(path, page_spec)
     except OcrUnavailable as exc:
         raise SystemExit(
             f"error: {path.name} has no embedded text, and OCR cannot run: {exc}"

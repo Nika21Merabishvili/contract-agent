@@ -24,19 +24,23 @@ import time
 
 import modal
 
-MODEL = "qwen3.6:35b"
+MODEL = "qwen3.6:35b"        # steps 1-4, the analysis pipeline (ollama_client.py)
+OCR_MODEL = "glm-ocr:bf16"   # scanned-PDF OCR (ocr_glm.py)
+MODELS = (MODEL, OCR_MODEL)
 OLLAMA_PORT = 11434
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("curl", "zstd")
     .run_commands("curl -fsSL https://ollama.com/install.sh | sh")
-    # Bake the model weights into the image at build time so a cold start
-    # doesn't have to pull multiple GB from Ollama's registry.
+    # Bake every model's weights into the image at build time so a cold start
+    # doesn't have to pull multiple GB from Ollama's registry. Both the analysis
+    # model and the OCR model are baked in, so a scanned contract is OCR'd on the
+    # GPU too, not just the four analysis calls.
     .run_commands(
         "ollama serve & "
         "SERVER_PID=$!; "
-        "sleep 5 && ollama pull " + MODEL + "; "
+        "sleep 5" + "".join(f" && ollama pull {m}" for m in MODELS) + "; "
         "kill $SERVER_PID"
     )
     .env({"OLLAMA_HOST": f"0.0.0.0:{OLLAMA_PORT}"})
@@ -46,7 +50,7 @@ app = modal.App("nxia-ollama", image=image)
 
 
 @app.function(
-    gpu="A10G",              # 24GB: qwen3.6:35b weights (~23GB) leave little headroom for KV cache -- watch for OOM
+    gpu="A10G",              # 24GB: qwen3.6:35b (~23GB) nearly fills it, so Ollama swaps it out to load glm-ocr for a scanned PDF and reloads it for analysis -- correct, but that reload is slow. A bigger GPU (e.g. A100 40GB) would hold both at once.
     scaledown_window=300,    # keep the container warm 5 min after the last request, then scale to zero
     timeout=600,
 )

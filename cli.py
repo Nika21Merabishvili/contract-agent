@@ -25,7 +25,7 @@ from pipeline import analyse_contract
 from treaty_rates import refresh_all_treaty_rates
 
 
-def pick_file_dialog() -> Path | None:
+def pick_file_dialog(title: str = "Select a contract PDF") -> Path | None:
     """Open the OS file picker. Returns None if tkinter is unavailable or nothing chosen."""
     try:
         import tkinter
@@ -38,7 +38,7 @@ def pick_file_dialog() -> Path | None:
         root.withdraw()
         root.attributes("-topmost", True)  # otherwise the dialog opens behind the terminal
         chosen = filedialog.askopenfilename(
-            title="Select a contract PDF",
+            title=title,
             filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
         )
         root.destroy()
@@ -135,6 +135,11 @@ def main() -> None:
         help="skip the OCR fallback for scanned PDFs (debugging); a PDF with no "
              "text layer then fails as unreadable instead of being OCR'd",
     )
+    parser.add_argument(
+        "--ocr-engine", choices=("glm", "tesseract"), default="glm",
+        help="which engine OCRs scanned PDFs: 'glm' (default) uses the glm-ocr "
+             "vision model via Ollama; 'tesseract' uses the classic Tesseract engine",
+    )
     parser.add_argument("--think", action="store_true", help="enable the model's reasoning mode")
     parser.add_argument(
         "-v", "--verbose", action="store_true",
@@ -182,7 +187,7 @@ def main() -> None:
 
     pdf = args.pdfs[0]
 
-    pages = extract(pdf, args.pages, use_ocr=not args.no_ocr)
+    pages = extract(pdf, args.pages, use_ocr=not args.no_ocr, ocr_engine=args.ocr_engine)
     words = sum(len(p.text.split()) for p in pages)
     via = " via OCR" if any(p.ocr for p in pages) else ""
     diag.progress(f"Extracted {len(pages)} page(s), ~{words} words from {pdf.name}{via}")
@@ -258,6 +263,7 @@ def run_batch(args: argparse.Namespace) -> None:
             pages=args.pages,
             think=args.think,
             use_ocr=not args.no_ocr,
+            ocr_engine=args.ocr_engine,
         )
     except Cancelled:
         raise SystemExit(130)
