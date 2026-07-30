@@ -1,8 +1,12 @@
 # Python dependencies for nxia-contract-agent.
 #   pip install -r requirements.txt
 #
-# Also required, but not a pip package: Ollama 0.5.0+ with the model pulled --
-#   ollama pull qwen3.5:4b   (see README.md).
+# Also required, but not pip packages:
+#   - Ollama 0.5.0+ with the model pulled -- ollama pull qwen3.5:4b (see README.md).
+#   - For scanned (image-only) PDFs: the Tesseract OCR engine, a system binary,
+#     WITH the English and Georgian language packs (eng + kat). See "Scanned
+#     PDFs" in README.md for install instructions. Only needed when a PDF has
+#     no embedded text layer; everything else works without it.
 
 ollama            # local model calls (steps 1-4)
 pypdf             # PDF text extraction (also the pdfplumber fallback)
@@ -10,3 +14,5 @@ pdfplumber        # table-aware PDF extraction (recommended)
 openpyxl          # step 2: the Excel workbook
 flask             # the local web UI (app.py)
 requests          # treaty_rates.py: fetches the mof.ge double-taxation table
+pytesseract       # OCR fallback for scanned PDFs (drives the Tesseract binary)
+pypdfium2         # OCR fallback: renders PDF pages to images for Tesseract

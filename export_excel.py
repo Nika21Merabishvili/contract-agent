@@ -11,7 +11,9 @@ for the model again:
 One workbook, one worksheet, one table: row 1 is the Georgian header, and every
 analysis below it is one row. Columns come only from `contract_data` and
 `tax_analysis`. `_audit` is a reasoning trace for scoring the model, not a thing
-end users read, so it never reaches the sheet.
+end users read, so it never reaches the sheet. The one exception is a trailing
+note column that appears only when a contract was OCR'd from a scanned PDF --
+see OCR_COLUMN_LABEL below.
 
 The headers are not written here -- they come from `georgian.FIELD_LABELS`, next
 to the rest of the app's Georgian, so the sheet cannot drift out of sync with it.
@@ -58,6 +60,18 @@ DEFAULT_WIDTH = 24
 
 # The optional leading column a batch export adds -- see build_workbook(sources=...).
 SOURCE_COLUMN_LABEL = "წყარო ფაილი"
+
+# The optional trailing column marking OCR-derived rows. Only added when at
+# least one analysis carries `"_source": "ocr"` (a scanned contract that went
+# through the OCR fallback), so the validated sheet layout is untouched for
+# every normal run. The note names the verbatim fields worth re-checking: OCR
+# can misread exactly the characters -- names, ID numbers, amounts, dates --
+# that this sheet exists to copy faithfully.
+OCR_COLUMN_LABEL = "შენიშვნა"
+OCR_NOTE = (
+    "დასკანერებული დოკუმენტი (OCR) — გადაამოწმეთ სახელები, "
+    "საიდენტიფიკაციო ნომრები, თანხები და თარიღები"
+)
 
 
 # --------------------------------------------------------------------------- #
@@ -177,6 +191,11 @@ def build_workbook(analyses: list[dict], *, sources: list[str] | None = None) ->
     pairs = columns(analyses)
     offset = 1 if sources is not None else 0
 
+    # See OCR_COLUMN_LABEL: a trailing note column, present only when some row
+    # actually came through OCR.
+    ocr_flags = [analysis.get("_source") == "ocr" for analysis in analyses]
+    ocr_column = (len(pairs) + offset + 1) if any(ocr_flags) else None
+
     book = Workbook()
     sheet = book.active
     sheet.title = SHEET_TITLE
@@ -199,6 +218,11 @@ def build_workbook(analyses: list[dict], *, sources: list[str] | None = None) ->
         cell.font = header_font
         cell.fill = header_fill
         cell.alignment = header_align
+    if ocr_column is not None:
+        cell = sheet.cell(row=1, column=ocr_column, value=OCR_COLUMN_LABEL)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
     sheet.row_dimensions[1].height = 46
 
     for row, analysis in enumerate(analyses, start=2):
@@ -214,6 +238,13 @@ def build_workbook(analyses: list[dict], *, sources: list[str] | None = None) ->
             cell.alignment = Alignment(
                 vertical="top", wrap_text=key in FREE_TEXT_FIELDS
             )
+        if ocr_column is not None:
+            cell = sheet.cell(
+                row=row, column=ocr_column, value=OCR_NOTE if ocr_flags[row - 2] else ""
+            )
+            cell.font = body_font
+            cell.border = body_border
+            cell.alignment = Alignment(vertical="top", wrap_text=True)
 
     if sources is not None:
         sheet.column_dimensions["A"].width = DEFAULT_WIDTH
@@ -222,8 +253,10 @@ def build_workbook(analyses: list[dict], *, sources: list[str] | None = None) ->
         sheet.column_dimensions[letter].width = (
             WIDE_WIDTH if key in FREE_TEXT_FIELDS else DEFAULT_WIDTH
         )
+    if ocr_column is not None:
+        sheet.column_dimensions[get_column_letter(ocr_column)].width = WIDE_WIDTH
 
-    last = get_column_letter(len(pairs) + offset)
+    last = get_column_letter(ocr_column or (len(pairs) + offset))
     sheet.freeze_panes = "B2" if sources is not None else "A2"
     sheet.auto_filter.ref = f"A1:{last}{len(analyses) + 1}"
 

@@ -9,10 +9,16 @@ Georgia using a local Qwen model via Ollama, and outputs structured JSON.
 - [Ollama](https://ollama.com) **0.5.0 or newer** (structured outputs), with the
   model pulled: `ollama pull qwen3.5:4b`
 - Python packages: `pip install -r requirements.txt`
-  (or `pip install ollama pypdf pdfplumber openpyxl flask`). `pdfplumber` is
-  optional but recommended — without it, tables reach the model as interleaved
-  columns and figures inside them get lost. `openpyxl` is needed only for step 2,
-  the Excel export; `flask` only for the web app.
+  (or `pip install ollama pypdf pdfplumber openpyxl flask pytesseract pypdfium2`).
+  `pdfplumber` is optional but recommended — without it, tables reach the model
+  as interleaved columns and figures inside them get lost. `openpyxl` is needed
+  only for step 2, the Excel export; `flask` only for the web app;
+  `pytesseract` + `pypdfium2` only for scanned PDFs (see below).
+- **For scanned (image-only) PDFs only:** the
+  [Tesseract OCR engine](https://github.com/tesseract-ocr/tesseract) — a
+  **system binary, not a pip package** — with **both** the English and Georgian
+  language packs (`eng`, `kat`). See [Scanned PDFs](#scanned-pdfs-ocr-fallback).
+  Everything else works without it.
 - The Georgian text of Article 104 in [knowledge/](knowledge/) — see
   [knowledge/README.md](knowledge/README.md).
 
@@ -48,6 +54,54 @@ an array of these for a batch):
   conclusion with reasoning.
 - `_audit` — the full Article 104 clause checklist and the clauses cited, so the
   reasoning can be scored rather than just the verdict.
+
+## Scanned PDFs (OCR fallback)
+
+A photographed or scanned contract has no embedded text layer, so `pdfplumber`
+and `pypdf` extract nothing from it. When that happens — and **only** then —
+the extractor falls back to OCR: each page is rendered to a ~300 DPI grayscale
+image with `pypdfium2` and read by [Tesseract](https://github.com/tesseract-ocr/tesseract)
+via `pytesseract`, with **both English and Georgian** language data loaded
+(contracts here are either, or mixed — Georgian OCR'd with only `eng` loaded
+comes back as gibberish). The recovered text then flows through the exact same
+four-call pipeline; nothing downstream changes. A PDF with a real text layer is
+never OCR'd — the embedded text is always more accurate.
+
+Toolchain tradeoff: `pypdfium2` + `pytesseract` was chosen over running
+[OCRmyPDF](https://ocrmypdf.readthedocs.io) on the file because it needs no
+system dependencies beyond Tesseract itself (OCRmyPDF pulls in Ghostscript and
+friends). The cost is that the OCR'd text lives only in memory for the run —
+the PDF on disk is not rewritten with a text layer.
+
+Installing Tesseract (a system binary plus language packs, **not** pip):
+
+- **Windows:** `winget install UB-Mannheim.TesseractOCR`, then download
+  [`kat.traineddata`](https://github.com/tesseract-ocr/tessdata) and copy it
+  into `C:\Program Files\Tesseract-OCR\tessdata` (needs admin). Without admin
+  rights, put `eng.traineddata` and `kat.traineddata` in
+  `%LOCALAPPDATA%\nxia-contract-agent\tessdata` instead — the app finds them
+  there automatically.
+- **Debian/Ubuntu:** `sudo apt install tesseract-ocr tesseract-ocr-eng tesseract-ocr-kat`
+- **macOS:** `brew install tesseract tesseract-lang`
+
+Behaviour worth knowing:
+
+- **OCR output is flagged for verification.** OCR can misread exactly the
+  characters this tool exists to copy verbatim — names, tax IDs, amounts,
+  dates. An OCR'd contract's JSON carries `"_source": "ocr"`, the web page
+  lists which files were OCR-read, and the workbook gains a trailing
+  "შენიშვნა" column telling the reader to verify those fields. None of that
+  appears for normal text-layer PDFs.
+- **Unreadable stays unreadable.** If OCR yields nothing plausible (a blank
+  scan, a photo too poor to read), the file fails with a clear message rather
+  than feeding garbage into the analysis — same principle as a tax verdict the
+  model couldn't reach: an honest failure beats a wrong-but-confident row.
+- **Missing Tesseract is a message, not a crash** — it names what to install,
+  including the Georgian pack, and only comes up when a scanned PDF actually
+  arrives.
+- OCR adds noticeable time (seconds per page, before the model even starts).
+- `--no-ocr` skips the fallback for debugging; scanned PDFs then fail as
+  unreadable, as they did before OCR existed.
 
 ## Step 2 — the Excel workbook
 
@@ -94,10 +148,12 @@ its own turn (exactly the CLI's batch behaviour above) and downloads one
 `.xlsx`: a single contract keeps the plain sheet and its own filename; several
 become one workbook (one row each, in upload order, with a source-file column)
 named `contracts_<n>_<date>.xlsx`. The page shows "Analysing…" (or, for a
-batch, "Analysing N contracts…") while the local model works, then reports the
-result — including which file(s), if any, could not be analysed (no extractable
-text, or no tax verdict reached) so a single bad PDF doesn't cost the rest of
-the batch.
+batch, "Analysing N contracts…") while the local model works — a scanned PDF
+takes longer, since it is OCR'd first — then reports the result: which file(s),
+if any, could not be analysed (unreadable even after OCR, or no tax verdict
+reached) so a single bad PDF doesn't cost the rest of the batch, and which
+file(s) were read via OCR and so warrant a check of names, ID numbers, amounts
+and dates against the original.
 
 It is a thin wrapper: the analysis is `pipeline.analyze_many` (looping
 `pipeline.analyze`, the same single-contract call the CLI makes) and the

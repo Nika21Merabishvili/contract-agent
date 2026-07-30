@@ -111,7 +111,9 @@ def _run_analysis():
 
     The response is JSON on success (200): `succeeded` (names, in upload order),
     `failed` (name + reason for anything that could not be analysed -- possibly
-    empty), `filename` (a suggested download name), and `workbook_base64` (the
+    empty), `ocr` (the subset of succeeded names whose text had to be OCR'd
+    from a scanned PDF -- the page tells the user to verify those values),
+    `filename` (a suggested download name), and `workbook_base64` (the
     .xlsx bytes). The page decodes that back into a file, triggers the download,
     and renders `failed` as the batch report. A total failure -- nothing usable
     was uploaded, or none of it could be analysed -- returns the same plain
@@ -196,6 +198,13 @@ def _run_analysis():
         succeeded_names = [name for name, _ in succeeded]
         succeeded_results = [result for _, result in succeeded]
 
+        # Contracts whose text came from OCR (scanned PDFs -- see
+        # extraction.extract). The page lists them with a verify-the-values
+        # note; the workbook marks the same rows via its own note column.
+        ocr_names = [
+            name for name, result in succeeded if result.get("_source") == "ocr"
+        ]
+
         # A source column only earns its place once there is more than one row to
         # tell apart -- a lone surviving contract gets the plain, familiar sheet.
         book = build_workbook(
@@ -213,6 +222,7 @@ def _run_analysis():
     return jsonify(
         succeeded=succeeded_names,
         failed=failed,
+        ocr=ocr_names,
         filename=download_name,
         workbook_base64=base64.b64encode(buffer.getvalue()).decode("ascii"),
     )

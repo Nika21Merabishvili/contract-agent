@@ -241,10 +241,11 @@
       stopButton.disabled = false;
       stopButton.textContent = "Stop";
       const n = files.length;
-      const workingMessage = n === 1
+      const workingMessage = (n === 1
         ? "Analysing… this can take a minute."
         : `Analysing ${n} contracts… this can take a few minutes. Each one is read by the ` +
-          "local model in its own turn, one after another.";
+          "local model in its own turn, one after another.") +
+        " A scanned PDF (no text layer) is read by OCR first, which adds a while per page.";
       setStatus("working", `<span class="spinner"></span>${workingMessage}`);
 
       try {
@@ -275,8 +276,19 @@
 
         const failed = data.failed || [];
         const succeeded = data.succeeded || [];
+        const ocrRead = data.ocr || [];
         let message = `Downloaded ${escapeHtml(data.filename)} ` +
           `(${succeeded.length} of ${n} contract${n === 1 ? "" : "s"} analysed).`;
+        if (ocrRead.length > 0) {
+          // OCR'd values are machine-read from images, not copied from a text
+          // layer -- the sheet flags the same rows, but say it here too, where
+          // the user is actually looking.
+          message += "<br>Read via OCR (scanned document — verify names, ID numbers, " +
+            "amounts and dates against the original):" +
+            "<ul>" +
+            ocrRead.map((name) => `<li>${escapeHtml(name)}</li>`).join("") +
+            "</ul>";
+        }
         if (failed.length > 0) {
           message += "<br>The following could not be analysed and were left out:" +
             "<ul>" +
@@ -284,7 +296,7 @@
             "</ul>";
           setStatus("partial", message);
         } else {
-          setStatus("done", message);
+          setStatus(ocrRead.length > 0 ? "partial" : "done", message);
         }
       } catch (_) {
         setStatus("error", "Could not reach the server. Is it still running?");

@@ -272,7 +272,14 @@ def analyse_contract(
         english["service_type_other"] = terms["service_type_other_en"]
     translated = call_translate(english, **kw)
 
-    return assemble(parties, terms, tax, translated)
+    result = assemble(parties, terms, tax, translated)
+    if any(p.ocr for p in pages):
+        # The text was machine-read from page images, not copied from a text
+        # layer -- flag it so the web page and the Excel sheet can say "verify
+        # the verbatim fields". Only ever present on OCR'd contracts, so a
+        # normal contract's JSON is byte-identical to what it always was.
+        result["_source"] = "ocr"
+    return result
 
 
 # --------------------------------------------------------------------------- #
@@ -287,6 +294,7 @@ def analyze(
     article104: str | Path | None = None,
     pages: str | None = None,
     think: bool = False,
+    use_ocr: bool = True,
     cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run the whole "PDF -> JSON" half of the pipeline as one call.
@@ -313,7 +321,7 @@ def analyze(
     password-protected. Callers surface these to the user.
     """
     pdf_path = Path(pdf_path)
-    contract_pages = extract(pdf_path, pages)
+    contract_pages = extract(pdf_path, pages, use_ocr=use_ocr)
     explicit = Path(article104) if article104 is not None else None
     article_path = find_article104(explicit, article_lang)
     article_text = load_text_document(article_path)
@@ -353,6 +361,7 @@ def analyze_many(
     article104: str | Path | None = None,
     pages: str | None = None,
     think: bool = False,
+    use_ocr: bool = True,
     cancel_event: threading.Event | None = None,
 ) -> list[BatchItem]:
     """Run `analyze` once per PDF, sequentially, each in its own fresh model context.
@@ -380,7 +389,7 @@ def analyze_many(
         try:
             result = analyze(
                 path, article_lang=article_lang, article104=article104, pages=pages,
-                think=think, cancel_event=cancel_event,
+                think=think, use_ocr=use_ocr, cancel_event=cancel_event,
             )
             items.append(BatchItem(name=path.name, result=result, error=None))
         except Cancelled:

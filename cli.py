@@ -130,6 +130,11 @@ def main() -> None:
              "(default: next to the contract PDF). Same as piping into export_excel.py",
     )
     parser.add_argument("--pages", help="limit contract extraction, e.g. '1-10' or '2,5,9-12'")
+    parser.add_argument(
+        "--no-ocr", action="store_true",
+        help="skip the OCR fallback for scanned PDFs (debugging); a PDF with no "
+             "text layer then fails as unreadable instead of being OCR'd",
+    )
     parser.add_argument("--think", action="store_true", help="enable the model's reasoning mode")
     parser.add_argument(
         "-v", "--verbose", action="store_true",
@@ -177,9 +182,10 @@ def main() -> None:
 
     pdf = args.pdfs[0]
 
-    pages = extract(pdf, args.pages)
+    pages = extract(pdf, args.pages, use_ocr=not args.no_ocr)
     words = sum(len(p.text.split()) for p in pages)
-    diag.progress(f"Extracted {len(pages)} page(s), ~{words} words from {pdf.name}")
+    via = " via OCR" if any(p.ocr for p in pages) else ""
+    diag.progress(f"Extracted {len(pages)} page(s), ~{words} words from {pdf.name}{via}")
 
     if args.dump_text:
         for page in pages:
@@ -251,6 +257,7 @@ def run_batch(args: argparse.Namespace) -> None:
             article104=args.article104,
             pages=args.pages,
             think=args.think,
+            use_ocr=not args.no_ocr,
         )
     except Cancelled:
         raise SystemExit(130)
