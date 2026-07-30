@@ -295,7 +295,7 @@ def analyze(
     pages: str | None = None,
     think: bool = False,
     use_ocr: bool = True,
-    ocr_engine: str = "glm",
+    ocr_engine: str = "hybrid",
     cancel_event: threading.Event | None = None,
 ) -> dict:
     """Run the whole "PDF -> JSON" half of the pipeline as one call.
@@ -363,7 +363,7 @@ def analyze_many(
     pages: str | None = None,
     think: bool = False,
     use_ocr: bool = True,
-    ocr_engine: str = "glm",
+    ocr_engine: str = "hybrid",
     cancel_event: threading.Event | None = None,
 ) -> list[BatchItem]:
     """Run `analyze` once per PDF, sequentially, each in its own fresh model context.

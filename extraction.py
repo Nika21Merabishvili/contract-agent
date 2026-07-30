@@ -122,7 +122,7 @@ def extract(
     page_spec: str | None = None,
     *,
     use_ocr: bool = True,
-    ocr_engine: str = "glm",
+    ocr_engine: str = "hybrid",
 ) -> list[Page]:
     """Extract contract text; OCR the page images if there is no text layer.
 
@@ -134,10 +134,14 @@ def extract(
     pipeline. Pages that came through OCR are marked (Page.ocr) so the result
     can carry a verify-these-values flag.
 
-    `ocr_engine` selects the transcriber: "glm" (default) uses the glm-ocr
-    vision model via Ollama (ocr_glm.py); "tesseract" uses the classic Tesseract
-    engine with English + Georgian language data (ocr.py). Both produce the same
-    list[Page] shape.
+    `ocr_engine` selects the transcriber:
+      "hybrid" (default) -- glm-ocr for the page, with the Georgian portions
+          corrected by Tesseract (ocr_hybrid.py); each script comes from the
+          engine that reads it best.
+      "glm"       -- the glm-ocr vision model alone (ocr_glm.py).
+      "tesseract" -- the classic Tesseract engine alone, English + Georgian
+          language data (ocr.py).
+    All three produce the same list[Page] shape.
 
     `use_ocr=False` (the CLI's --no-ocr) skips the fallback for debugging; a
     scanned PDF then fails with the no-text message, as it did before OCR
@@ -163,9 +167,12 @@ def extract(
     if ocr_engine == "tesseract":
         from ocr import ocr_pdf as run_ocr
         engine_label = "Tesseract, English+Georgian"
-    else:
+    elif ocr_engine == "glm":
         from ocr_glm import ocr_pdf_glm as run_ocr
         engine_label = "glm-ocr vision model"
+    else:  # "hybrid" -- glm-ocr, Georgian corrected by Tesseract
+        from ocr_hybrid import ocr_pdf_hybrid as run_ocr
+        engine_label = "glm-ocr + Tesseract for Georgian"
 
     diag.warn(
         f"  {path.name} has no embedded text layer -- running OCR ({engine_label}).\n"

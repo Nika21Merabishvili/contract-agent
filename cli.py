@@ -136,9 +136,10 @@ def main() -> None:
              "text layer then fails as unreadable instead of being OCR'd",
     )
     parser.add_argument(
-        "--ocr-engine", choices=("glm", "tesseract"), default="glm",
-        help="which engine OCRs scanned PDFs: 'glm' (default) uses the glm-ocr "
-             "vision model via Ollama; 'tesseract' uses the classic Tesseract engine",
+        "--ocr-engine", choices=("hybrid", "glm", "tesseract"), default="hybrid",
+        help="which engine OCRs scanned PDFs: 'hybrid' (default) is glm-ocr with the "
+             "Georgian corrected by Tesseract; 'glm' is the glm-ocr vision model alone; "
+             "'tesseract' is the classic Tesseract engine alone",
     )
     parser.add_argument("--think", action="store_true", help="enable the model's reasoning mode")
     parser.add_argument(
