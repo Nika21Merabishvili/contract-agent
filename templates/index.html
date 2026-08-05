@@ -3,8 +3,9 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token() }}">
   <title>Contract analyzer</title>
-  <style>
+  <style nonce="{{ csp_nonce }}">
     :root { color-scheme: light dark; }
     body {
       font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
@@ -110,9 +111,34 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
     footer { margin-top: 2rem; color: #888; font-size: 0.85rem; }
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 0.6rem;
+      font-size: 0.85rem;
+      color: #888;
+    }
+    .topbar form { margin: 0; }
+    .topbar button {
+      margin: 0;
+      padding: 0.25rem 0.7rem;
+      font-size: 0.85rem;
+      background: transparent;
+      color: #1f4e78;
+      border: 1px solid #b8c4d0;
+      border-radius: 6px;
+    }
   </style>
 </head>
 <body>
+  <div class="topbar">
+    <span>Signed in as {{ user }}</span>
+    <form method="post" action="{{ url_for('logout') }}">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <button type="submit">Sign out</button>
+    </form>
+  </div>
   <h1>Contract analyzer</h1>
   <p class="lead">
     Upload one or more service contracts (PDF). Each is analysed locally against
@@ -134,7 +160,11 @@
 
   <footer>Runs entirely on this machine via Ollama. Nothing is uploaded to the cloud.</footer>
 
-  <script>
+  <script nonce="{{ csp_nonce }}">
+    // Sent as the X-CSRFToken header on every state-changing fetch (Flask-WTF
+    // validates it); the cookie alone is not enough to forge a request.
+    const csrfToken = document.querySelector('meta[name="csrf-token"]').content;
+
     const form = document.getElementById("form");
     const fileInput = document.getElementById("file");
     const fileListEl = document.getElementById("file-list");
@@ -198,7 +228,7 @@
       stopButton.disabled = true;
       stopButton.textContent = "Stopping…";
       try {
-        await fetch("/cancel", { method: "POST" });
+        await fetch("/cancel", { method: "POST", headers: { "X-CSRFToken": csrfToken } });
       } catch (_) {
         // The in-flight /analyze request just runs to completion instead of
         // stopping early -- not fatal, nothing else to do from here.
@@ -251,7 +281,18 @@
       try {
         const body = new FormData();
         for (const f of files) body.append("file", f);
-        const response = await fetch("/analyze", { method: "POST", body });
+        const response = await fetch("/analyze", {
+          method: "POST",
+          body,
+          headers: { "X-CSRFToken": csrfToken },
+        });
+
+        if (response.status === 401) {
+          // Session expired mid-use -- send the user back to the login page.
+          setStatus("error", "Your session has expired. Redirecting to sign in…");
+          window.location = "/login";
+          return;
+        }
 
         let data;
         try {

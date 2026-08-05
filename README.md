@@ -8,12 +8,12 @@ Georgia using a local Qwen model via Ollama, and outputs structured JSON.
 
 - [Ollama](https://ollama.com) **0.5.0 or newer** (structured outputs), with the
   model pulled: `ollama pull qwen3.5:4b`
-- Python packages: `pip install -r requirements.txt`
-  (or `pip install ollama pypdf pdfplumber openpyxl flask pytesseract pypdfium2`).
+- Python packages: `pip install -r requirements.txt` (pinned; authoritative).
   `pdfplumber` is optional but recommended — without it, tables reach the model
   as interleaved columns and figures inside them get lost. `openpyxl` is needed
-  only for step 2, the Excel export; `flask` only for the web app;
-  `pytesseract` + `pypdfium2` only for scanned PDFs (see below).
+  only for step 2, the Excel export; `flask` (plus `flask-wtf`, `bcrypt`,
+  `waitress`) only for the web app; `pytesseract` + `pypdfium2` only for scanned
+  PDFs (see below). The CLI needs none of the web/security packages.
 - **For scanned (image-only) PDFs only:** the
   [Tesseract OCR engine](https://github.com/tesseract-ocr/tesseract) — a
   **system binary, not a pip package** — with **both** the English and Georgian
@@ -136,13 +136,21 @@ with no extra column, exactly as it always has.
 ## Web app — upload contracts, get one Excel back
 
 For a non-technical user, [app.py](app.py) puts a one-page browser UI in front of
-the exact same pipeline — no terminal needed:
+the exact same pipeline — no terminal needed. It requires signing in (see
+[SECURITY.md](SECURITY.md)):
 
 ```
-python app.py            # starts a local server and prints the URL
+python manage_users.py add <username>   # create a login (prompts for a password)
+python app.py                           # DEVELOPMENT server on http://127.0.0.1:5000
+python serve.py                         # PRODUCTION server (waitress) — deploy behind a TLS proxy
 ```
 
-Open the printed URL (http://127.0.0.1:5000) and choose one PDF or several —
+`python app.py` is Flask's development server — for local use only. The
+network-reachable intranet deployment runs `serve.py` (waitress) behind a
+TLS-terminating reverse proxy, with a session secret and per-user logins; the
+full setup and the InfoSec assessment are in [SECURITY.md](SECURITY.md).
+
+After signing in, choose one PDF or several —
 the file picker takes any number. Clicking the button analyses each contract in
 its own turn (exactly the CLI's batch behaviour above) and downloads one
 `.xlsx`: a single contract keeps the plain sheet and its own filename; several
@@ -157,10 +165,46 @@ and dates against the original.
 
 It is a thin wrapper: the analysis is `pipeline.analyze_many` (looping
 `pipeline.analyze`, the same single-contract call the CLI makes) and the
-workbook is `export_excel.build_workbook`, the same code the CLI calls. It runs
-locally and single-user — bound to `127.0.0.1`, talking only to the local
-Ollama, one request at a time, no job queue. No cloud, no API keys, no
-database. The terminal workflow above is unchanged.
+workbook is `export_excel.build_workbook`, the same code the CLI calls. Analysis
+stays local — it talks only to the local Ollama, one request at a time, no job
+queue, no cloud, no API keys, no database, and the contract text never leaves the
+machine. The web tier around it was hardened for a network-reachable intranet
+deployment (login, CSRF, security headers, upload validation, audit logging); see
+[SECURITY.md](SECURITY.md). The terminal workflow above is unchanged.
+
+## Running on a Modal GPU
+
+By default everything runs against a **local** Ollama (`127.0.0.1:11434`), i.e.
+this machine's CPU/GPU. The analysis model (`qwen3.6:35b`, ~23 GB) is slow on
+CPU, so [modal_ollama.py](modal_ollama.py) can instead run Ollama on a rented GPU
+([Modal](https://modal.com)) and expose it over HTTP. The app doesn't change —
+only which host it points at, via the `OLLAMA_HOST` environment variable.
+
+**No endpoint is hardcoded in this repo — deploy your own under your own Modal
+account:**
+
+```
+pip install modal
+modal token new                    # authenticate as yourself (one time)
+modal deploy modal_ollama.py       # prints https://<your-workspace>--nxia-ollama-serve.modal.run
+```
+
+Then point the pipeline at that URL for the current session:
+
+```
+# Windows (PowerShell)
+$env:MODAL_OLLAMA_HOST = "https://<your-workspace>--nxia-ollama-serve.modal.run"
+.\run_modal.ps1                    # sets OLLAMA_HOST from it, then runs app.py
+
+# or set OLLAMA_HOST directly for serve.py / the CLI
+$env:OLLAMA_HOST = "https://<your-workspace>--nxia-ollama-serve.modal.run"
+python serve.py
+```
+
+The container scales to zero when idle, so you are billed only for GPU seconds
+while a request is in flight (or a warm container is waiting out its idle
+window) — **on your Modal account.** If you don't want a cloud GPU at all, leave
+`OLLAMA_HOST` unset and run a local Ollama with the models pulled.
 
 ## How it works
 

@@ -2,3 +2,16 @@ __pycache__/
 modal_commands.txt
 CONTEXT.md
 compare_extraction.py
+
+# Secrets and local configuration -- never commit these.
+.env
+*.env
+!.env.example
+
+# Local login store (bcrypt password hashes) and anything under instance/.
+instance/
+users.json
+
+# Audit logs (may contain usernames, IPs, filenames -- operational data).
+logs/
+*.log
