@@ -1,4 +1,6 @@
-# nxia-contract-agent
+# contract-agent
+
+**Reads a service contract PDF, analyses it against Georgian tax law with a local LLM, and returns a structured Excel workbook.** Built for an audit firm, where it replaced a manual review step. Everything runs on the machine it is installed on — no cloud, no API keys, and the contract text never leaves the building.
 
 Analyses a service contract (PDF) against Article 104 of the Tax Code of
 Georgia using a local Qwen model via Ollama, and outputs structured JSON.
